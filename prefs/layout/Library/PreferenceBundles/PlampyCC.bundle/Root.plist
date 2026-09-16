@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>items</key><array>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>Tweak</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>default</key><false/><key>defaults</key><string>com.misakaproject.plampyCC</string><key>key</key><string>kEnabled</string><key>label</key><string>Enabled</string></dict>
+<dict><key>cell</key><string>PSSegmentCell</string><key>default</key><integer>0</integer><key>defaults</key><string>com.misakaproject.plampyCC</string><key>key</key><string>kThemeType</string><key>label</key><string>Theme</string><key>validTitles</key><array><string>Plampy</string><string>Pulsar</string></array><key>validValues</key><array><integer>0</integer><integer>1</integer></array></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>Wallpaper</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>default</key><false/><key>defaults</key><string>com.misakaproject.plampyCC</string><key>key</key><string>kWallpaperSwitch</string><key>label</key><string>Add wallpaper</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>default</key><false/><key>defaults</key><string>com.misakaproject.plampyCC</string><key>key</key><string>kBlurEffectSwitch</string><key>label</key><string>Add blur effect</string></dict>
+</array><key>title</key><string>PlampyCC</string></dict></plist>

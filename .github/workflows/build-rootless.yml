@@ -1,0 +1,37 @@
+name: Rootless Theos package
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  THEOS_COMMIT: 17f8af2808cbdf8b35f26077270c9a6b3f91f5d8
+  SDK_COMMIT: 146e41ff2c292168388929e43c9b4de2f00e36b3
+  SDK_NAME: iPhoneOS16.5.sdk
+  SDK_SHA256: 5e0fd3f01266cce4ce012d4a99b38eb56578fca40d09edc81cd83dee958202fb
+jobs:
+  package:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.2.20
+      - run: brew install ldid dpkg
+      - name: Install pinned Theos and SDK (theos-package-build contract)
+        env:
+          THEOS: "${{ runner.temp }}/theos"
+        run: |
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          git -C "$THEOS" checkout --detach "$THEOS_COMMIT"
+          git -C "$THEOS" submodule update --init --recursive
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/$SDK_NAME.tar.xz" "https://github.com/theos/sdks/releases/download/master-146e41f/$SDK_NAME.tar.xz"
+          printf '%s  %s\n' "$SDK_SHA256" "$RUNNER_TEMP/$SDK_NAME.tar.xz" | shasum -a 256 -c -
+          mkdir -p "$THEOS/sdks" && tar -xJf "$RUNNER_TEMP/$SDK_NAME.tar.xz" -C "$THEOS/sdks"
+          printf 'THEOS=%s\n' "$THEOS" >> "$GITHUB_ENV"
+      - name: Build and retain unstripped arm64e artifacts
+        run: make clean package FINALPACKAGE=1
+      - name: Upload package and symbols
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plampycc-rootless-package
+          path: packages/
