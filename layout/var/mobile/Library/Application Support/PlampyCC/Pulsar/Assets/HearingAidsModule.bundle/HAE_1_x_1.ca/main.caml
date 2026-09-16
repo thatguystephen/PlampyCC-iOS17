@@ -4,11 +4,11 @@
 		<sublayers>
 			<CALayer id="#1" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/ear.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/ear.png"/>
 			</CALayer>
 			<CALayer id="#2" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/ear.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/ear.png"/>
 			</CALayer>
 		</sublayers>
 		<states>

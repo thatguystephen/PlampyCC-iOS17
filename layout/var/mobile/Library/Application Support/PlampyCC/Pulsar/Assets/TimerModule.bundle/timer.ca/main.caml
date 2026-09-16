@@ -7,11 +7,11 @@ Copyrighted by YangJiii ( @duongduong0908 ) and しまりん ( @straight_tamago 
         <sublayers>
             <CALayer id="#1" bounds="0 0 40 40" position="0 0">
                 <contents type="CGImage"
-                    src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/timer1.png"/>
+                    src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/timer1.png"/>
             </CALayer>
             <CALayer id="#2" bounds="0 0 40 40" position="0 0">
                 <contents type="CGImage"
-                    src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/timer.png"/>
+                    src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/timer.png"/>
             </CALayer>
         </sublayers>
         <states>

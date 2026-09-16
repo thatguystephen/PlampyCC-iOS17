@@ -29,9 +29,39 @@ jobs:
           mkdir -p "$THEOS/sdks" && tar -xJf "$RUNNER_TEMP/$SDK_NAME.tar.xz" -C "$THEOS/sdks"
           printf 'THEOS=%s\n' "$THEOS" >> "$GITHUB_ENV"
       - name: Build and retain unstripped arm64e artifacts
-        run: make clean package FINALPACKAGE=1
-      - name: Upload package and symbols
+        run: |
+          set -euo pipefail
+          make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          rm -rf dist
+          mkdir -p dist/unstripped
+          find packages -type f -name '*.deb' -exec cp {} dist/ \;
+          # Preserve target binaries before package stripping for crash-symbol correlation.
+          find .theos -type f \( -name 'PlampyCC.dylib' -o -name 'PlampyCC' \) -print0 | while IFS= read -r -d '' file; do
+            cp "$file" "dist/unstripped/$(basename "$(dirname "$file")")-$(basename "$file")"
+          done
+          test -n "$(find dist/unstripped -type f -print -quit)"
+          git rev-parse HEAD > dist/source-commit.txt
+          python3 - <<'PY'
+          import hashlib, json, os
+          root = 'dist'
+          entries = []
+          for directory, _, names in os.walk(root):
+              for name in sorted(names):
+                  path = os.path.join(directory, name)
+                  rel = os.path.relpath(path, root)
+                  if rel in {'build-manifest.json', 'SHA256SUMS'}:
+                      continue
+                  with open(path, 'rb') as handle:
+                      digest = hashlib.sha256(handle.read()).hexdigest()
+                  entries.append({'path': rel, 'sha256': digest, 'bytes': os.path.getsize(path)})
+          manifest = {'sourceCommit': open('dist/source-commit.txt').read().strip(), 'target': os.environ['SDK_NAME'], 'architectures': ['arm64', 'arm64e'], 'files': entries}
+          with open('dist/build-manifest.json', 'w') as handle:
+              json.dump(manifest, handle, indent=2, sort_keys=True)
+              handle.write('\n')
+          PY
+          (cd dist && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS)
+      - name: Upload package, provenance, and unstripped targets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: plampycc-rootless-package
-          path: packages/
+          path: dist/

@@ -4,7 +4,7 @@
 		<sublayers>
             <CALayer id="#1" bounds="0 0 40 40" position="0 0">
                 <contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/bluetooth_white1.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/bluetooth_white1.png"/>
                 <animations>
                     <animation type="CAKeyframeAnimation" keyPath="opacity" repeatCount="Inf" duration="2"> 
                         <values>
@@ -17,7 +17,7 @@
             </CALayer>
             <CALayer id="#2" bounds="0 0 40 40" position="0 0">
                 <contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/bluetooth_white2.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/bluetooth_white2.png"/>
                 <animations>
                     <animation type="CAKeyframeAnimation" keyPath="opacity" repeatCount="Inf" duration="2"> 
                         <values>
@@ -30,7 +30,7 @@
             </CALayer>
 			<CALayer id="#3" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/bluetooth.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/bluetooth.png"/>
 			</CALayer>
 		</sublayers>
 		<states>

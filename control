@@ -1,0 +1,9 @@
+Package: xyz.cypwn.plampycc
+Name: PlampyCC
+Version: 1.0.2-1
+Architecture: iphoneos-arm64
+Description: PlampyCC Control Center themes for rootless iOS 17
+Maintainer: CyPwn
+Author: sugiuta
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 15.0)

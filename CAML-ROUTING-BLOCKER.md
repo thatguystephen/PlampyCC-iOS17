@@ -1,0 +1,7 @@
+# CAML routing compatibility boundary
+
+The candidate ships valid `index.xml`/`main.caml` packages for Plampy and Pulsar, but this source tree does not contain a usable iOS 17 declaration for `CCUICAPackageDescription`, `CCUIButtonModuleView`, `CCUIRoundButton`, or `CCUIContinuousSliderView`. The supplied 21D50 headers only forward-declare `CCUICAPackageDescription` in `SBElasticRouteDisplaying-Protocol.h`; the directly hooked classes and package-description initializer/setter signatures are absent. The corresponding ControlCenterUI and ControlCenterUIKit files are arm64e Mach-O binaries, not source headers.
+
+Because constructing a package description requires the exact iOS 17 initializer, ownership semantics, and setter/call-site ABI, manufacturing a replacement object or guessing selectors would risk SpringBoard crashes and would not be faithful implementation. The package callbacks therefore deliberately preserve the original package unchanged. Static icon routing remains active and has an explicit original-glyph fallback. Animated CAML routing is an unresolved review/build gate, not a stub claimed as complete.
+
+Next gate: obtain a bounded iOS 17 class-dump/selector map for the package-description producer and each target setter, then implement and runtime-test a retained `CCUICAPackageDescription` replacement against both themes. Do not claim animation parity from the shipped assets alone.
