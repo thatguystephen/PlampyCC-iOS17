@@ -4,17 +4,17 @@
 		<sublayers>
 			<CALayer id="#8" bounds="0 0 40 40" position="0 0" opacity="1">
 				<contents type="CGImage"
-					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/record_off.png" />
+					src="/var/jb/var/jb/var/jb/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/record_off.png" />
 			</CALayer>
 			<CALayer id="#1" bounds="0 0 40 40" position="0 0" opacity="0">
 				<contents type="CGImage"
-					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/record_on.png" />
+					src="/var/jb/var/jb/var/jb/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/record_on.png" />
 			</CALayer>
 			<CATransformLayer id="#3" opacity="1">
 				<sublayers>
 					<CALayer id="#2" bounds="0 0 40 40" position="0 0" opacity="0">
 						<contents type="CGImage"
-							src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/3.png" />
+							src="/var/jb/var/jb/var/jb/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/3.png" />
 					</CALayer>
 				</sublayers>
 			</CATransformLayer>
@@ -22,7 +22,7 @@
 				<sublayers>
 					<CALayer id="#4" bounds="0 0 40 40" position="0 0" opacity="0">
 						<contents type="CGImage"
-							src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/2.png" />
+							src="/var/jb/var/jb/var/jb/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/2.png" />
 					</CALayer>
 				</sublayers>
 			</CATransformLayer>
@@ -30,7 +30,7 @@
 				<sublayers>
 					<CALayer id="#6" bounds="0 0 40 40" position="0 0" opacity="0">
 						<contents type="CGImage"
-							src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/1.png" />
+							src="/var/jb/var/jb/var/jb/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/1.png" />
 					</CALayer>
 				</sublayers>
 			</CATransformLayer>

@@ -17,7 +17,7 @@ jobs:
         with:
           bun-version: 1.2.20
       - run: brew install ldid dpkg
-      - name: Install pinned Theos and SDK (theos-package-build contract)
+      - name: Install pinned Theos and SDK
         env:
           THEOS: "${{ runner.temp }}/theos"
         run: |
@@ -28,39 +28,29 @@ jobs:
           printf '%s  %s\n' "$SDK_SHA256" "$RUNNER_TEMP/$SDK_NAME.tar.xz" | shasum -a 256 -c -
           mkdir -p "$THEOS/sdks" && tar -xJf "$RUNNER_TEMP/$SDK_NAME.tar.xz" -C "$THEOS/sdks"
           printf 'THEOS=%s\n' "$THEOS" >> "$GITHUB_ENV"
-      - name: Build and retain unstripped arm64e artifacts
+      - name: Build and emit verifier contract
         run: |
           set -euo pipefail
           make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           rm -rf dist
-          mkdir -p dist/unstripped
-          find packages -type f -name '*.deb' -exec cp {} dist/ \;
-          # Preserve target binaries before package stripping for crash-symbol correlation.
-          find .theos -type f \( -name 'PlampyCC.dylib' -o -name 'PlampyCC' \) -print0 | while IFS= read -r -d '' file; do
-            cp "$file" "dist/unstripped/$(basename "$(dirname "$file")")-$(basename "$file")"
+          mkdir -p dist/packages dist/symbols/arm64 dist/symbols/arm64e
+          find packages -type f -name '*.deb' -exec cp {} dist/packages/ \;
+          test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
+          # Preserve each unstripped tweak and preference target, split by architecture.
+          for target in PlampyCC.dylib PlampyCC; do
+            arm64_source=$(find .theos -type f -path '*/arm64/*' -name "$target" -print | head -n 1)
+            arm64e_source=$(find .theos -type f -path '*/arm64e/*' -name "$target" -print | head -n 1)
+            test -n "$arm64_source" && test -n "$arm64e_source"
+            lipo -create "$arm64_source" "$arm64e_source" -output "$RUNNER_TEMP/$target-universal"
+            lipo -thin arm64 "$RUNNER_TEMP/$target-universal" -output "dist/symbols/arm64/$target"
+            lipo -thin arm64e "$RUNNER_TEMP/$target-universal" -output "dist/symbols/arm64e/$target"
           done
-          test -n "$(find dist/unstripped -type f -print -quit)"
+          test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 4
           git rev-parse HEAD > dist/source-commit.txt
-          python3 - <<'PY'
-          import hashlib, json, os
-          root = 'dist'
-          entries = []
-          for directory, _, names in os.walk(root):
-              for name in sorted(names):
-                  path = os.path.join(directory, name)
-                  rel = os.path.relpath(path, root)
-                  if rel in {'build-manifest.json', 'SHA256SUMS'}:
-                      continue
-                  with open(path, 'rb') as handle:
-                      digest = hashlib.sha256(handle.read()).hexdigest()
-                  entries.append({'path': rel, 'sha256': digest, 'bytes': os.path.getsize(path)})
-          manifest = {'sourceCommit': open('dist/source-commit.txt').read().strip(), 'target': os.environ['SDK_NAME'], 'architectures': ['arm64', 'arm64e'], 'files': entries}
-          with open('dist/build-manifest.json', 'w') as handle:
-              json.dump(manifest, handle, indent=2, sort_keys=True)
-              handle.write('\n')
-          PY
-          (cd dist && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS)
-      - name: Upload package, provenance, and unstripped targets
+          xcodebuild -version > dist/xcode-version.txt
+          python3 .github/workflows/emit-manifest.py
+          (cd dist && find packages symbols source-commit.txt xcode-version.txt -type f -print | sort | xargs shasum -a 256 > SHA256SUMS)
+      - name: Upload package, provenance, and symbols
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: plampycc-rootless-package
