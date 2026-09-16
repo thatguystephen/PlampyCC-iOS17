@@ -22,6 +22,11 @@ static NSString *MappedBundle(NSString *name) {
 }
 static BOOL HasMethod(Class cls, SEL sel) { return cls && class_getInstanceMethod(cls, sel) != NULL; }
 static id Call(id obj, SEL sel) { return obj && [obj respondsToSelector:sel] ? ((id(*)(id,SEL))objc_msgSend)(obj,sel) : nil; }
+static void SetIcon(id view, NSString *name) {
+    NSString *path = [[AssetRoot() stringByAppendingPathComponent:@"Icon"] stringByAppendingPathComponent:[name stringByAppendingString:@".png"]];
+    UIImage *image = [UIImage imageWithContentsOfFile:path];
+    if (image && [view respondsToSelector:@selector(setGlyphImage:)]) ((void(*)(id,SEL,id))objc_msgSend)(view,@selector(setGlyphImage:),image);
+}
 static void SetImage(id view, NSString *imageName, NSString *bundle) {
     if (!view || !bundle) return;
     NSString *path = [[AssetRoot() stringByAppendingPathComponent:@"Assets"] stringByAppendingPathComponent:bundle];
@@ -38,8 +43,8 @@ static void buttonLayout(id self, SEL _cmd) {
     // Classification is intentionally centralized; unknown modules pass through unchanged.
     id controller = Call(self, NSSelectorFromString(@"_viewControllerForAncestor"));
     NSString *identifier = Call(Call(controller, @selector(module)), @selector(applicationIdentifier));
-    NSDictionary *icons = @{ @"com.apple.camera": @"AppIcon", @"com.apple.calculator": @"AppIcon", @"com.apple.BarcodeScanner": @"AppIcon", @"com.apple.VoiceMemos": @"AppIcon", @"com.apple.Magnifier": @"AppIcon" };
-    NSString *icon = icons[identifier]; if (icon) SetImage(self, icon, nil);
+    NSDictionary *icons = @{ @"com.apple.camera": @"Camera", @"com.apple.calculator": @"Calculator", @"com.apple.BarcodeScanner": @"QRCode", @"com.apple.VoiceMemos": @"VoiceMemos", @"com.apple.Magnifier": @"Magnifier" };
+    NSString *icon = icons[identifier]; if (icon) SetIcon(self, icon);
 }
 static void roundMove(id self, SEL _cmd) { if (orig_roundMove) orig_roundMove(self,_cmd); if (!gEnabled) return; }
 static void packageHook(id self, SEL _cmd, id package) {
