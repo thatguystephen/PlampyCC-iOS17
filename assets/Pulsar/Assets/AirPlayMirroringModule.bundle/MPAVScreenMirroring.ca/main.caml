@@ -6,11 +6,11 @@
 		<sublayers>
 			<CALayer id="#1" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/mirror_off.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/mirror_off.png"/>
 			</CALayer>
 			<CALayer id="#2" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Pulsar/Icon/mirror_on.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Pulsar/Icon/mirror_on.png"/>
 			</CALayer>
 		</sublayers>
 		<states>

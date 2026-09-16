@@ -7,7 +7,7 @@ Copyrighted by YangJiii ( @duongduong0908 ) and しまりん ( @straight_tamago 
 		<sublayers>
             <CALayer id="#1" bounds="0 0 40 40" position="0 0">
                 <contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Plampy/Icon/pin_on1.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Plampy/Icon/pin_on1.png"/>
                 <animations>
                     <animation type="CAKeyframeAnimation" keyPath="opacity" repeatCount="Inf" duration="2"> 
                         <values>
@@ -20,7 +20,7 @@ Copyrighted by YangJiii ( @duongduong0908 ) and しまりん ( @straight_tamago 
             </CALayer>
             <CALayer id="#2" bounds="0 0 40 40" position="0 0">
                 <contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Plampy/Icon/pin_on2.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Plampy/Icon/pin_on2.png"/>
                 <animations>
                     <animation type="CAKeyframeAnimation" keyPath="opacity" repeatCount="Inf" duration="2"> 
                         <values>
@@ -33,7 +33,7 @@ Copyrighted by YangJiii ( @duongduong0908 ) and しまりん ( @straight_tamago 
             </CALayer>
 			<CALayer id="#3" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/mobile/Documents/.plampyCC/Plampy/Icon/pin_off.png"/>
+					src="/var/mobile/Library/Application Support/PlampyCC/Plampy/Icon/pin_off.png"/>
 			</CALayer>
 		</sublayers>
 		<states>
