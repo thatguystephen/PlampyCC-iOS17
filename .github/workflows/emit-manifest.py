@@ -10,6 +10,13 @@ def rel(path):
     return path.relative_to(root).as_posix()
 packages = sorted((root / 'packages').glob('*.deb'))
 symbols = sorted(path for path in (root / 'symbols').rglob('*') if path.is_file())
+target_names = {'PlampyCC.dylib': 'tweak', 'PlampyCC': 'preferences'}
+if len(packages) != 1:
+    raise SystemExit(f'exactly one package is required, found {len(packages)}')
+expected_symbols = {(arch, name) for arch in ('arm64', 'arm64e') for name in target_names}
+actual_symbols = {(path.parent.name, path.name) for path in symbols}
+if any(path.parent.parent != root / 'symbols' for path in symbols) or actual_symbols != expected_symbols:
+    raise SystemExit('symbols must contain tweak and preferences targets for arm64 and arm64e')
 manifest = {
     'schemaVersion': 1,
     'repository': os.environ['GITHUB_REPOSITORY'],
@@ -26,7 +33,7 @@ manifest = {
     'architectures': ['arm64', 'arm64e'],
     'packages': [{'filename': rel(path), 'sha256': digest(path)} for path in packages],
     'unstrippedBinaries': [
-        {'filename': rel(path), 'architectures': [path.parent.name], 'sha256': digest(path)}
+        {'filename': rel(path), 'target': target_names[path.name], 'architectures': [path.parent.name], 'sha256': digest(path)}
         for path in symbols
     ],
 }

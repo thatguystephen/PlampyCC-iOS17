@@ -4,7 +4,7 @@ on:
 permissions:
   contents: read
 env:
-  THEOS_COMMIT: 17f8af2808cbdf8b35f26077270c9a6b3f91f5d8
+  THEOS_COMMIT: 5280bd038207e14f8bd76f5417aa2fe641c03228
   SDK_COMMIT: 146e41ff2c292168388929e43c9b4de2f00e36b3
   SDK_NAME: iPhoneOS16.5.sdk
   SDK_SHA256: 5e0fd3f01266cce4ce012d4a99b38eb56578fca40d09edc81cd83dee958202fb
@@ -24,6 +24,13 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
           git -C "$THEOS" checkout --detach "$THEOS_COMMIT"
           git -C "$THEOS" submodule update --init --recursive
+          test "$(git -C "$THEOS" rev-parse HEAD)" = "$THEOS_COMMIT"
+          grep -F 'THEOS_PACKAGE_INSTALL_PREFIX = /var/jb' "$THEOS/vendor/mod/rootless/package.mk"
+          grep -F '#define ROOT_PATH_NS(path) @THEOS_PACKAGE_INSTALL_PREFIX path' "$THEOS/vendor/include/rootless.h"
+          grep -F '_THEOS_SCHEME_STAGE = $(_THEOS_STAGING_TMP)$(THEOS_PACKAGE_INSTALL_PREFIX)' "$THEOS/makefiles/common.mk"
+          grep -F 'rsync -a "$(THEOS_LAYOUT_DIR_NAME)/" "$(THEOS_STAGING_DIR)"' "$THEOS/makefiles/stage.mk"
+          grep -F '$(shell mv $(i) $(_THEOS_SCHEME_STAGE))' "$THEOS/makefiles/package/deb.mk"
+          grep -F 'TARGET_STRIP = :' "$THEOS/makefiles/common.mk"
           curl --fail --location --retry 3 -o "$RUNNER_TEMP/$SDK_NAME.tar.xz" "https://github.com/theos/sdks/releases/download/master-146e41f/$SDK_NAME.tar.xz"
           printf '%s  %s\n' "$SDK_SHA256" "$RUNNER_TEMP/$SDK_NAME.tar.xz" | shasum -a 256 -c -
           mkdir -p "$THEOS/sdks" && tar -xJf "$RUNNER_TEMP/$SDK_NAME.tar.xz" -C "$THEOS/sdks"
@@ -31,21 +38,28 @@ jobs:
       - name: Build and emit verifier contract
         run: |
           set -euo pipefail
-          make clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          make clean stage FINALPACKAGE=0 STRIP=0 THEOS_PACKAGE_SCHEME=rootless
           rm -rf dist
           mkdir -p dist/packages dist/symbols/arm64 dist/symbols/arm64e
-          find packages -type f -name '*.deb' -exec cp {} dist/packages/ \;
-          test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
-          # Preserve each unstripped tweak and preference target, split by architecture.
-          for target in PlampyCC.dylib PlampyCC; do
-            arm64_source=$(find .theos -type f -path '*/arm64/*' -name "$target" -print | head -n 1)
-            arm64e_source=$(find .theos -type f -path '*/arm64e/*' -name "$target" -print | head -n 1)
-            test -n "$arm64_source" && test -n "$arm64e_source"
-            lipo -create "$arm64_source" "$arm64e_source" -output "$RUNNER_TEMP/$target-universal"
-            lipo -thin arm64 "$RUNNER_TEMP/$target-universal" -output "dist/symbols/arm64/$target"
-            lipo -thin arm64e "$RUNNER_TEMP/$target-universal" -output "dist/symbols/arm64e/$target"
+          collect_unstripped() {
+            arch="$1"
+            target="$2"
+            output="$3"
+            candidates=()
+            while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find .theos -type f -path "*/$arch/*" -name "$target" -print)
+            test "${#candidates[@]}" -eq 1
+            test -s "${candidates[0]}"
+            cp "${candidates[0]}" "$output"
+            test -s "$output"
+          }
+          for arch in arm64 arm64e; do
+            collect_unstripped "$arch" PlampyCC.dylib "dist/symbols/$arch/PlampyCC.dylib"
+            collect_unstripped "$arch" PlampyCC "dist/symbols/$arch/PlampyCC"
           done
           test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 4
+          make clean package FINALPACKAGE=1 STRIP=1 THEOS_PACKAGE_SCHEME=rootless
+          find packages -type f -name '*.deb' -exec cp {} dist/packages/ \;
+          test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
           git rev-parse HEAD > dist/source-commit.txt
           xcodebuild -version > dist/xcode-version.txt
           python3 .github/workflows/emit-manifest.py

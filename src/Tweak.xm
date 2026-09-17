@@ -11,7 +11,7 @@ static NSString * const kPrefsDomain = @"com.misakaproject.plampyCC";
 static NSString * const kPrefsChanged = @"com.misakaproject.plampyCC.settingsChanged";
 static BOOL gEnabled, gWallpaper, gBlur;
 static NSInteger gTheme;
-static NSHashTable *gOverlays;
+static NSHashTable *gOverlays, *gGlyphViews;
 static void (*orig_layout)(id, SEL), (*orig_roundMove)(id, SEL);
 static void (*orig_buttonPackage)(id, SEL, id), (*orig_roundPackage)(id, SEL, id), (*orig_sliderPackage)(id, SEL, id);
 static void (*orig_overlayLoad)(id, SEL), (*orig_present)(id, SEL, BOOL, id), (*orig_dismiss)(id, SEL, BOOL, id);
@@ -38,25 +38,60 @@ static UIImage *IconImage(NSString *name) {
         image = [UIImage imageWithContentsOfFile:[[AssetRoot() stringByAppendingPathComponent:@"Plampy/Icon"] stringByAppendingPathComponent:file]];
     return image;
 }
-static void SetIcon(id view, NSString *name) {
-    UIImage *image = IconImage(name);
-    if (!image || ![view respondsToSelector:@selector(setGlyphImage:)]) return;
-    if (!objc_getAssociatedObject(view, "plampy.originalGlyph")) {
-        UIImage *original = Call(view, @selector(glyphImage));
-        if (original) objc_setAssociatedObject(view, "plampy.originalGlyph", original, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
+static UIImage *GlyphImage(id view) { return Call(view, @selector(glyphImage)); }
+static void SetGlyphImage(id view, UIImage *image) {
     ((void(*)(id, SEL, id))objc_msgSend)(view, @selector(setGlyphImage:), image);
 }
-static void RestoreIcon(id view) {
-    UIImage *original = objc_getAssociatedObject(view, "plampy.originalGlyph");
-    if (original && [view respondsToSelector:@selector(setGlyphImage:)])
-        ((void(*)(id, SEL, id))objc_msgSend)(view, @selector(setGlyphImage:), original);
+static BOOL SameImage(UIImage *left, UIImage *right) { return left == right || [left isEqual:right]; }
+static NSString *ButtonIdentifier(id view) {
+    id controller = Call(view, NSSelectorFromString(@"_viewControllerForAncestor"));
+    return Call(Call(controller, @selector(module)), @selector(applicationIdentifier));
+}
+static void ReleaseGlyphOverride(id view) {
+    NSDictionary *state = objc_getAssociatedObject(view, "plampy.glyphOverride");
+    if (!state) return;
+    if ([view respondsToSelector:@selector(setGlyphImage:)]) {
+        UIImage *current = [view respondsToSelector:@selector(glyphImage)] ? GlyphImage(view) : nil;
+        if (!current || SameImage(current, state[@"applied"])) SetGlyphImage(view, state[@"original"]);
+    }
+    objc_setAssociatedObject(view, "plampy.glyphOverride", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+static void ReconcileGlyphView(id view) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ ReconcileGlyphView(view); });
+        return;
+    }
+    NSDictionary *state = objc_getAssociatedObject(view, "plampy.glyphOverride");
+    NSString *identifier = ButtonIdentifier(view);
+    NSString *icon = IconForIdentifier(identifier);
+    UIImage *image = icon ? IconImage(icon) : nil;
+    BOOL canRead = [view respondsToSelector:@selector(glyphImage)];
+    BOOL canWrite = [view respondsToSelector:@selector(setGlyphImage:)];
+    if (!gEnabled || !icon || !image || !canRead || !canWrite) {
+        ReleaseGlyphOverride(view);
+        return;
+    }
+    UIImage *current = GlyphImage(view);
+    if (!current) {
+        ReleaseGlyphOverride(view);
+        return;
+    }
+    if (state && ![state[@"identifier"] isEqual:identifier]) {
+        ReleaseGlyphOverride(view);
+        state = nil;
+        current = GlyphImage(view);
+        if (!current) return;
+    }
+    UIImage *original = state ? state[@"original"] : current;
+    if (state && !SameImage(current, state[@"applied"])) original = current;
+    if (!SameImage(current, image)) SetGlyphImage(view, image);
+    objc_setAssociatedObject(view, "plampy.glyphOverride", @{ @"identifier": identifier, @"original": original, @"applied": image }, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 static void buttonLayout(id self, SEL cmd) {
     if (orig_layout) orig_layout(self, cmd);
-    NSString *identifier = Call(Call(Call(self, NSSelectorFromString(@"_viewControllerForAncestor")), @selector(module)), @selector(applicationIdentifier));
-    NSString *icon = IconForIdentifier(identifier);
-    if (gEnabled && icon) SetIcon(self, icon); else if (!gEnabled && icon) RestoreIcon(self);
+    if (!gGlyphViews) gGlyphViews = [NSHashTable weakObjectsHashTable];
+    [gGlyphViews addObject:self];
+    ReconcileGlyphView(self);
 }
 static void roundMove(id self, SEL cmd) { if (orig_roundMove) orig_roundMove(self, cmd); }
 static void buttonPackage(id self, SEL cmd, id package) { if (orig_buttonPackage) orig_buttonPackage(self, cmd, package); }
@@ -71,8 +106,11 @@ static UIView *Background(id self) {
 }
 static void RemoveWallpaper(id self) {
     UIView *wall = objc_getAssociatedObject(self, "plampy.wallpaper");
+    UIView *blur = objc_getAssociatedObject(self, "plampy.blur");
+    [blur removeFromSuperview];
+    objc_setAssociatedObject(self, "plampy.blur", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [wall removeFromSuperview];
-    objc_setAssociatedObject(self, "plampy.wallpaper", nil, OBJC_ASSOCIATION_ASSIGN);
+    objc_setAssociatedObject(self, "plampy.wallpaper", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 static void ReconcileWallpaper(id self) {
     if (!gEnabled || !gWallpaper) { RemoveWallpaper(self); return; }
@@ -83,15 +121,26 @@ static void ReconcileWallpaper(id self) {
     if (!wall) {
         wall = [[UIImageView alloc] initWithImage:image];
         wall.frame = background.bounds; wall.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        wall.alpha = 0; [background insertSubview:wall atIndex:0];
+        [background insertSubview:wall atIndex:0];
         objc_setAssociatedObject(self, "plampy.wallpaper", wall, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    } else { wall.image = image; }
+    } else {
+        wall.image = image;
+        wall.frame = background.bounds;
+        if (wall.superview != background) [background insertSubview:wall atIndex:0];
+    }
     UIVisualEffectView *blur = objc_getAssociatedObject(self, "plampy.blur");
     if (gBlur && !blur) {
         blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark]];
         blur.frame = wall.bounds; blur.autoresizingMask = wall.autoresizingMask; [wall addSubview:blur];
         objc_setAssociatedObject(self, "plampy.blur", blur, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    } else if (!gBlur && blur) { [blur removeFromSuperview]; objc_setAssociatedObject(self, "plampy.blur", nil, OBJC_ASSOCIATION_ASSIGN); }
+    } else if (gBlur && blur.superview != wall) {
+        blur.frame = wall.bounds;
+        [wall addSubview:blur];
+    } else if (!gBlur && blur) {
+        [blur removeFromSuperview];
+        objc_setAssociatedObject(self, "plampy.blur", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    wall.alpha = [objc_getAssociatedObject(self, "plampy.presented") boolValue] ? 1 : 0;
 }
 static void overlayLoad(id self, SEL cmd) {
     if (orig_overlayLoad) orig_overlayLoad(self, cmd);
@@ -103,12 +152,23 @@ static void Animate(id self, BOOL show) {
     UIView *wall = objc_getAssociatedObject(self, "plampy.wallpaper");
     if (wall) [UIView animateWithDuration:.25 animations:^{ wall.alpha = (gEnabled && gWallpaper && show) ? 1 : 0; }];
 }
-static void present(id self, SEL cmd, BOOL animated, id completion) { if (orig_present) orig_present(self, cmd, animated, completion); Animate(self, YES); }
-static void dismiss(id self, SEL cmd, BOOL animated, id completion) { if (orig_dismiss) orig_dismiss(self, cmd, animated, completion); Animate(self, NO); }
+static void present(id self, SEL cmd, BOOL animated, id completion) {
+    objc_setAssociatedObject(self, "plampy.presented", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (orig_present) orig_present(self, cmd, animated, completion);
+    ReconcileWallpaper(self); Animate(self, YES);
+}
+static void dismiss(id self, SEL cmd, BOOL animated, id completion) {
+    objc_setAssociatedObject(self, "plampy.presented", @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (orig_dismiss) orig_dismiss(self, cmd, animated, completion);
+    ReconcileWallpaper(self); Animate(self, NO);
+}
 static void ReloadPrefs(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kPrefsDomain];
     gEnabled = [d boolForKey:@"kEnabled"]; gWallpaper = [d boolForKey:@"kWallpaperSwitch"]; gBlur = [d boolForKey:@"kBlurEffectSwitch"]; gTheme = [d integerForKey:@"kThemeType"];
-    dispatch_async(dispatch_get_main_queue(), ^{ for (id overlay in gOverlays) ReconcileWallpaper(overlay); });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (id view in gGlyphViews) ReconcileGlyphView(view);
+        for (id overlay in gOverlays) ReconcileWallpaper(overlay);
+    });
 }
 static void Install(Class cls, SEL sel, IMP imp, IMP *orig) { if (HasMethod(cls, sel)) MSHookMessageEx(cls, sel, imp, (void **)orig); }
 __attribute__((constructor)) static void init_plampycc(void) {
