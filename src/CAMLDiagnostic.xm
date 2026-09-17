@@ -176,7 +176,7 @@ static bool SerializeEvent(CAMLDiagnosticEvent *event) {
     uint64_t serializedMonotonic = event->monotonicMs % 10000000000000ULL;
     uint32_t serializedWall = event->wallSeconds > UINT32_MAX ? UINT32_MAX : (uint32_t)event->wallSeconds;
     int written = snprintf(event->serialized, sizeof(event->serialized),
-                           "{\"v\":1,\"t\":%llu,\"w\":%u,\"s\":\"%.12s\",\"p\":\"%.20s\",\"x\":\"%.12s\",\"n\":%d,\"g\":\"%.12s\",\"d\":\"%.20s\",\"i\":%d,\"a\":\"%.20s\",\"r\":%u,\"b\":\"%.24s\",\"u\":\"%.36s\"}\n",
+                           "{\"v\":1,\"t\":%llu,\"w\":%u,\"s\":\"%.12s\",\"p\":\"%.20s\",\"x\":\"%.12s\",\"n\":%d,\"g\":\"%.12s\",\"d\":\"%.20s\",\"i\":%d,\"a\":\"%.20s\",\"r\":%u,\"b\":\"%.25s\",\"u\":\"%.36s\"}\n",
                            (unsigned long long)serializedMonotonic, serializedWall,
                            event->site, event->packageName, event->pathPrefix,
                            event->descriptionIsNew ? 1 : 0, event->state,

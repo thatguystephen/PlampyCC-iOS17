@@ -63,6 +63,7 @@ assert_true("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC/CA
 assert_true("@0700" in SOURCE and "@0600" in SOURCE and "chmod(path.fileSystemRepresentation, 0600)" in SOURCE, "diagnostic output permissions are not restrictive")
 assert_true("kRingCapacity = 512" in SOURCE and "kSerializedEventCapacity = 256" in SOURCE and "kSessionEventCap = 2000" in SOURCE, "bounded logging constants are missing")
 assert_true("kRepeatCollapseWindowMs = 100" in SOURCE and "kTupleDedupWindowMs = 1000" in SOURCE, "dedup windows are missing")
+assert_true('kDiagnosticBuildId = "plampycc-caml-observer-v1"' in SOURCE and '%.25s\\",\\"u\\"' in SOURCE, "install provenance build ID is truncated or missing")
 assert_true("std::atomic<bool> gLoggingDisabled(false)" in SOURCE and "DisableLoggingForSession" in SOURCE, "session fail-open disable is missing")
 assert_true("os_unfair_lock" in SOURCE and "dispatch_sync" not in SOURCE and "dispatch_async" not in SOURCE, "hook logging violates the synchronization contract")
 assert_true("method_getTypeEncoding" in SOURCE and "ABIShapeMatches" in SOURCE, "runtime ABI validation is missing")
