@@ -64,7 +64,7 @@ jobs:
             target="$2"
             output="$3"
             candidates=()
-            while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find ".theos/obj/debug/$arch" -type f -name "$target" ! -path '*/.dSYM/*' -print)
+            while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find ".theos/obj/debug/$arch" -type f -name "$target" ! -path '*.dSYM/*' -print)
             printf 'Unstripped candidates for %s/%s:\n' "$arch" "$target"
             printf '  %s\n' "${candidates[@]}"
             test "${#candidates[@]}" -eq 1
