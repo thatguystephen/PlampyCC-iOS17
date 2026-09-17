@@ -64,7 +64,7 @@ jobs:
             target="$2"
             output="$3"
             candidates=()
-            while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find .theos -type f -path "*/$arch/*" -name "$target" -print)
+            while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find .theos -type f -path "*/$arch/*" -name "$target" ! -path '*/.dSYM/*' -print)
             test "${#candidates[@]}" -eq 1
             test -s "${candidates[0]}"
             cp "${candidates[0]}" "$output"
