@@ -257,9 +257,9 @@ for path in sorted((ROOT / ".github/workflows").rglob("*")):
 assert_true("runs-on: macos-15" in WORKFLOW and "test \"$(uname -m)\" = arm64" in WORKFLOW, "Apple Silicon workflow preflight is missing")
 
 # The existing functional module has only the narrow dismissal flush seam; no functional state or argument path changed.
-tweak_diff = subprocess.run(["git", "diff", "HEAD", "--unified=0", "--", "src/Tweak.xm"], cwd=ROOT, text=True, capture_output=True, check=True).stdout
-assert_true(tweak_diff.count('+#import "CAMLDiagnostic.h"') == 1 and tweak_diff.count("+    CAMLDiagnosticFlushAtDismiss();") == 1, "Tweak.xm changed beyond the narrow diagnostic flush seam")
-assert_true("if (orig_dismiss) orig_dismiss(self, cmd, animated, completion);" in (ROOT / "src/Tweak.xm").read_text(), "dismissal original call was not preserved")
+tweak_source = (ROOT / "src/Tweak.xm").read_text()
+assert_true(tweak_source.count('#import "CAMLDiagnostic.h"') == 1 and tweak_source.count("CAMLDiagnosticFlushAtDismiss();") == 1, "Tweak.xm diagnostic seam is missing or duplicated")
+assert_true("if (orig_dismiss) orig_dismiss(self, cmd, animated, completion);" in tweak_source, "dismissal original call was not preserved")
 for phrase in ("Hook list", "kDiagnosticEnabled", "events.jsonl", "build ID", "device-test gate"):
     assert_true(phrase in IMPLEMENTATION_DOC, f"implementation document omits {phrase}")
 

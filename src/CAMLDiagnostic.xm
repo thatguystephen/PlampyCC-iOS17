@@ -10,6 +10,7 @@
 #import <os/lock.h>
 #import <sys/stat.h>
 #import <mach/mach_time.h>
+#import "CAMLDiagnostic.h"
 #include <atomic>
 #include <stdio.h>
 #include <string.h>
@@ -428,7 +429,7 @@ static void CAMLSliderStateHook(id self, SEL cmd, id state) {
     ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);
 }
 
-void CAMLDiagnosticFlushAtDismiss(void) {
+extern "C" void CAMLDiagnosticFlushAtDismiss(void) {
     if (!gDiagnosticEnabled.load(std::memory_order_acquire) || gLoggingDisabled.load(std::memory_order_acquire)) return;
     os_unfair_lock_lock(&gDiagnosticLock);
     bool succeeded = FlushRingLocked();
