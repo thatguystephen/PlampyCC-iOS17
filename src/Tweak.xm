@@ -6,6 +6,7 @@
 #import <substrate.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <rootless.h>
+#import "CAMLDiagnostic.h"
 
 static NSString * const kPrefsDomain = @"com.misakaproject.plampyCC";
 static NSString * const kPrefsChanged = @"com.misakaproject.plampyCC.settingsChanged";
@@ -160,6 +161,7 @@ static void present(id self, SEL cmd, BOOL animated, id completion) {
 static void dismiss(id self, SEL cmd, BOOL animated, id completion) {
     objc_setAssociatedObject(self, "plampy.presented", @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (orig_dismiss) orig_dismiss(self, cmd, animated, completion);
+    CAMLDiagnosticFlushAtDismiss();
     ReconcileWallpaper(self); Animate(self, NO);
 }
 static void ReloadPrefs(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {

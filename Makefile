@@ -6,7 +6,7 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = PlampyCC
-PlampyCC_FILES = src/Tweak.xm
+PlampyCC_FILES = src/Tweak.xm src/CAMLDiagnostic.xm
 PlampyCC_CFLAGS = -fobjc-arc -Werror=return-type
 PlampyCC_FRAMEWORKS = UIKit
 PlampyCC_PRIVATE_FRAMEWORKS = ControlCenterUI ControlCenterUIKit
