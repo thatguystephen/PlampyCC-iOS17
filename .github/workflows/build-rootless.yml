@@ -4,19 +4,37 @@ on:
 permissions:
   contents: read
 env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app
   THEOS_COMMIT: 5280bd038207e14f8bd76f5417aa2fe641c03228
   SDK_COMMIT: 146e41ff2c292168388929e43c9b4de2f00e36b3
   SDK_NAME: iPhoneOS16.5.sdk
   SDK_SHA256: 5e0fd3f01266cce4ce012d4a99b38eb56578fca40d09edc81cd83dee958202fb
 jobs:
   package:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+      - name: Checkout source # actions/checkout v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Setup Bun # oven-sh/setup-bun v2.0.2
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
         with:
           bun-version: 1.2.20
-      - run: brew install ldid dpkg
+      - name: Verify Apple Silicon runner and toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test -d "$DEVELOPER_DIR"
+          printf 'Runner architecture: '
+          uname -m
+          sw_vers
+          xcodebuild -version
+          xcrun --find clang
+          xcrun clang --version
+      - name: Install packaging tools
+        run: brew install ldid dpkg
       - name: Install pinned Theos and SDK
         env:
           THEOS: "${{ runner.temp }}/theos"
@@ -62,10 +80,18 @@ jobs:
           test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
           git rev-parse HEAD > dist/source-commit.txt
           xcodebuild -version > dist/xcode-version.txt
+          {
+            printf 'architecture: '
+            uname -m
+            sw_vers
+            xcodebuild -version
+            xcrun clang --version
+          } > dist/toolchain.txt
           python3 .github/workflows/emit-manifest.py
-          (cd dist && find packages symbols source-commit.txt xcode-version.txt -type f -print | sort | xargs shasum -a 256 > SHA256SUMS)
+          (cd dist && find packages symbols source-commit.txt xcode-version.txt toolchain.txt -type f -print | sort | xargs shasum -a 256 > SHA256SUMS)
       - name: Upload package, provenance, and symbols
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: plampycc-rootless-package
           path: dist/
+          if-no-files-found: error

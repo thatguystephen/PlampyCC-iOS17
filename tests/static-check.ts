@@ -36,6 +36,9 @@ assert(prefsMakefile.includes("PlampyCC_INSTALL_PATH = /Library/PreferenceBundle
 assert(!makefile.includes("layout/var/jb") && !prefsMakefile.includes("/var/jb"), "logical layout contains a second rootless prefix");
 assert(source.includes("#import <rootless.h>") && source.includes("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")"), "rootless runtime path contract missing");
 assert(workflow.includes("THEOS_COMMIT: 5280bd038207e14f8bd76f5417aa2fe641c03228"), "workflow does not pin the reviewed Theos revision");
+assert(workflow.includes("runs-on: macos-15") && !workflow.includes("macos-14"), "workflow is not pinned to the Apple Silicon macos-15 runner");
+assert(workflow.includes("DEVELOPER_DIR: /Applications/Xcode_16.4.app"), "workflow does not pin the documented Xcode 16.4 path");
+for (const record of ["test \"$(uname -m)\" = arm64", "sw_vers", "xcodebuild -version", "xcrun clang --version"]) assert(workflow.includes(record), `Apple Silicon preflight does not record ${record}`);
 for (const rule of [
   "THEOS_PACKAGE_INSTALL_PREFIX = /var/jb",
   "#define ROOT_PATH_NS(path) @THEOS_PACKAGE_INSTALL_PREFIX path",
