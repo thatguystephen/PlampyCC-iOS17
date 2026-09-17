@@ -170,7 +170,7 @@ static void ReloadPrefs(CFNotificationCenterRef center, void *observer, CFString
         for (id overlay in gOverlays) ReconcileWallpaper(overlay);
     });
 }
-static void Install(Class cls, SEL sel, IMP imp, IMP *orig) { if (HasMethod(cls, sel)) MSHookMessageEx(cls, sel, imp, (void **)orig); }
+static void Install(Class cls, SEL sel, IMP imp, IMP *orig) { if (HasMethod(cls, sel)) MSHookMessageEx(cls, sel, imp, orig); }
 __attribute__((constructor)) static void init_plampycc(void) {
     ReloadPrefs(NULL, NULL, NULL, NULL, NULL);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadPrefs, (__bridge CFStringRef)kPrefsChanged, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
