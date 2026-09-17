@@ -49,7 +49,7 @@ for (const rule of [
 ]) assert(workflow.includes(rule), `workflow does not verify Theos rule: ${rule}`);
 assert(workflow.includes("make clean stage FINALPACKAGE=0 STRIP=0") && workflow.includes("make clean package FINALPACKAGE=1 STRIP=1"), "workflow does not capture symbols before release stripping");
 for (const target of ["PlampyCC.dylib", "PlampyCC"]) assert(workflow.includes(`collect_unstripped \"$arch\" ${target}`), `workflow misses unstripped ${target}`);
-assert(workflow.includes("! -path '*/.dSYM/*'"), "symbol collection can select a DWARF duplicate instead of the target binary");
+assert(workflow.includes("find \".theos/obj/debug/$arch\" -type f") && workflow.includes("! -path '*/.dSYM/*'"), "symbol collection can select a DWARF duplicate instead of the target binary");
 
 for (const path of [
   "PlampyCC.plist",
