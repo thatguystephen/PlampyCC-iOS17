@@ -4,7 +4,7 @@ Status: observer-only implementation; disabled by default.
 
 ## Hook list
 
-The dedicated `src/CAMLDiagnostic.xm` module installs six PAC-safe `MSHookMessageEx` observers once at process initialization, after class, selector, and runtime ABI checks:
+The dedicated `src/CAMLDiagnostic.xm` module uses an install-once architecture: it constructs six POD descriptors synchronously inside the process constructor, then installs each PAC-safe `MSHookMessageEx` observer once after class, selector, and runtime ABI checks:
 
 - `-[CCUIButtonModuleView setGlyphPackageDescription:]` — `v24@0:8@16`
 - `-[CCUIRoundButton setGlyphPackageDescription:]` — `v24@0:8@16`
@@ -13,7 +13,7 @@ The dedicated `src/CAMLDiagnostic.xm` module installs six PAC-safe `MSHookMessag
 - `-[CCUIButtonModuleView setGlyphState:]` — `v24@0:8@16`
 - `-[CCUIBaseSliderView setGlyphState:]` — `v24@0:8@16`
 
-Quoted Objective-C class annotations are normalized before ABI-shape comparison. A missing class, selector, or incompatible runtime encoding skips that site without changing the stock implementation. The existing functional `dismiss` hook calls the narrow `CAMLDiagnosticFlushAtDismiss()` interface after the original dismiss call; when diagnostics are disabled this is a no-op, so functional behavior remains unchanged. No route-context hook is included.
+Quoted Objective-C class annotations are normalized before ABI-shape comparison. A missing class, selector, or incompatible runtime encoding skips that site without changing the stock implementation. The constructor records truthful per-site installation results (`q` in the install event) rather than treating constructor completion as installation success. The existing functional `dismiss` hook calls the narrow `CAMLDiagnosticFlushAtDismiss()` interface after the original dismiss call; when diagnostics are disabled this is a no-op, so functional behavior remains unchanged. No route-context hook is included.
 
 Every replacement keeps a separate original-IMP slot, records only an observation, and calls the original exactly once with the original arguments. Factory return values are returned unchanged. No setter argument, package description, glyph state, or return value is replaced.
 
@@ -23,7 +23,7 @@ Every replacement keeps a separate original-IMP slot, records only an observatio
 - `kDiagnosticEnabled`: BOOL, default `NO`
 - `kDiagnosticVerbose`: BOOL, default `NO`; gates factory events
 
-The hooks are installed once, but disabled and preference-transition paths are no-op observer paths. Preference changes are read through the existing Darwin notification seam; no preference writes occur from a hook. Logging failures disable diagnostics for the remainder of the process and the original IMP continues.
+The hooks are installed once and are never dynamically unhooked or rehooked. `kDiagnosticEnabled` and `kDiagnosticVerbose` gate observer bodies; disabled and preference-transition paths are no-op observer paths. Preference changes refresh those atomic gates through the existing Darwin notification seam only; no preference writes occur from a hook. Logging failures disable diagnostics for the remainder of the process and the original IMP continues.
 
 ## Log path and fixed schema
 
@@ -31,11 +31,11 @@ When enabled, bounded events are appended to the tweak-owned rootless path:
 
 `/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl`
 
-The directory is created with mode `0700`; the file is restricted to `0600`. Events use fixed compact JSON keys (`v` version, `t` monotonic milliseconds, `w` wall-clock seconds, `s` site, `p` package name, `x` path prefix, `n` description-is-new, `g` glyph state, `d` description class, `i` view tag, `a` ancestor class, `r` repeat, `b` build ID, `u` Mach-O UUID).
+The directory is created with mode `0700`; the file is restricted to `0600`. Events use fixed compact JSON keys (`v` version, `t` monotonic milliseconds, `w` wall-clock seconds, `s` site, `p` package name, `x` path prefix, `n` description-is-new, `g` glyph state, `d` description class, `i` view tag, `a` ancestor class, `r` repeat, `q` per-site installation success, `b` build ID, `u` Mach-O UUID).
 
 `x` is a coarse path classification (`private`, `var`, `app-container`, `Applications`, or `other`). Full paths, package URLs, CAML/XML contents, asset bytes, user data, and raw pointer values are never serialized. Package names and class/state strings are sanitized and bounded.
 
-The in-memory ring contains at most 512 events. Identical `(site, pkg, state)` tuples are suppressed for 1000 ms; repeats inside 100 ms update one event's `repeat` count. Matching `(site, pkg)` repeats inside 100 ms are also collapsed. A process-session cap of 2000 accepted events prevents unbounded growth. Ring flushes append complete bounded lines and synchronize the file under one `os_unfair_lock`; no synchronous queue dispatch is used.
+The in-memory ring contains at most 512 events. Identical `(site, pkg, state)` tuples are suppressed for 1000 ms; repeats inside 100 ms update one event's `repeat` count. Matching `(site, pkg)` repeats inside 100 ms are also collapsed. A process-session cap of 2000 accepted events prevents unbounded growth. Flushes use descriptor-based `openat`/`fstat`/`O_NOFOLLOW` confinement, reject unsafe owners/modes/non-regular files, write a complete bounded replacement to a temporary file, `fsync`, atomically `renameat` it, and `fsync` the directory. Restart recovery discards an incomplete final line and retains at most the newest 1 MiB of complete records. No synchronous queue dispatch is used.
 
 ## Build ID and provenance
 

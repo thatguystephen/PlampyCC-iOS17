@@ -1,6 +1,7 @@
 // CAML phase-one observer-only diagnostic for iOS 17.
 // This module never replaces a package description, glyph state, argument, or return value.
 #import <UIKit/UIKit.h>
+#import <CoreFoundation/CoreFoundation.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <substrate.h>
@@ -9,20 +10,29 @@
 #import <dlfcn.h>
 #import <os/lock.h>
 #import <sys/stat.h>
+#import <sys/types.h>
 #import <mach/mach_time.h>
+#import <errno.h>
+#import <fcntl.h>
+#import <unistd.h>
+#import <limits.h>
 #import "CAMLDiagnostic.h"
 #include <atomic>
 #include <stdio.h>
 #include <string.h>
 
-static NSString * const kDiagnosticPrefsDomain = @"com.misakaproject.plampyCC";
-static NSString * const kDiagnosticPrefsChanged = @"com.misakaproject.plampyCC.settingsChanged";
-static NSString * const kDiagnosticEnabledKey = @"kDiagnosticEnabled";
-static NSString * const kDiagnosticVerboseKey = @"kDiagnosticVerbose";
-static const char * const kDiagnosticBuildId = "plampycc-caml-observer-v1";
-
+static const char kDiagnosticPrefsDomain[] = "com.misakaproject.plampyCC";
+static CFStringRef const kDiagnosticPrefsChanged = CFSTR("com.misakaproject.plampyCC.settingsChanged");
+static const char kDiagnosticEnabledKey[] = "kDiagnosticEnabled";
+static const char kDiagnosticVerboseKey[] = "kDiagnosticVerbose";
+static const char kDiagnosticBuildId[] = "plampycc-caml-observer-v1";
+static const char kDiagnosticEventFile[] = "events.jsonl";
+static const char kDiagnosticTempFile[] = "events.jsonl.tmp";
+static constexpr size_t kDiagnosticSiteCount = 6;
 static constexpr size_t kRingCapacity = 512;
 static constexpr size_t kSerializedEventCapacity = 256;
+static constexpr size_t kDiagnosticPathCapacity = PATH_MAX;
+static constexpr size_t kDiagnosticRetentionBytes = 1024 * 1024;
 static constexpr uint64_t kRepeatCollapseWindowMs = 100;
 static constexpr uint64_t kTupleDedupWindowMs = 1000;
 static constexpr uint64_t kSessionEventCap = 2000;
@@ -31,6 +41,7 @@ static std::atomic<bool> gDiagnosticEnabled(false);
 static std::atomic<bool> gDiagnosticVerbose(false);
 static std::atomic<bool> gLoggingDisabled(false);
 static std::atomic<uint64_t> gSessionEventCount(0);
+static std::atomic<uint32_t> gDiagnosticInstalledMask(0);
 static __thread bool gInDiagnosticObserver = false;
 static os_unfair_lock gDiagnosticLock = OS_UNFAIR_LOCK_INIT;
 static char gDiagnosticUUID[37] = "unknown";
@@ -47,6 +58,7 @@ struct CAMLDiagnosticEvent {
     int32_t viewTag;
     bool descriptionIsNew;
     bool installationRecord;
+    bool installationSucceeded;
     uint32_t repeat;
     char serialized[kSerializedEventCapacity];
 };
@@ -54,6 +66,16 @@ struct CAMLDiagnosticEvent {
 struct CAMLSeenDescription {
     const void *view;
     const void *description;
+};
+
+struct CAMLDiagnosticSite {
+    const char *className;
+    const char *selectorName;
+    const char *encoding;
+    const char *label;
+    IMP replacement;
+    IMP *original;
+    bool classMethod;
 };
 
 static CAMLDiagnosticEvent gRing[kRingCapacity];
@@ -65,6 +87,9 @@ static char gLastPair[96] = {};
 static uint64_t gLastTupleMs = 0;
 static uint64_t gLastPairMs = 0;
 static uint32_t gLastRingIndex = 0;
+static unsigned char gRetentionBuffer[kDiagnosticRetentionBytes];
+
+static bool SerializeEvent(CAMLDiagnosticEvent *event);
 
 static IMP gOriginalButtonPackage = NULL;
 static IMP gOriginalRoundPackage = NULL;
@@ -153,54 +178,196 @@ static NSString *DiagnosticOutputDirectory(void) {
     return ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic");
 }
 
-static bool EnsureDiagnosticOutputFile(NSFileHandle **handle) {
-    NSString *directory = DiagnosticOutputDirectory();
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    NSDictionary *directoryAttributes = @{ NSFilePosixPermissions: @0700 };
-    if (![fileManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:directoryAttributes error:NULL]) {
-        if (![fileManager fileExistsAtPath:directory]) return false;
-    }
-    NSString *path = [directory stringByAppendingPathComponent:@"events.jsonl"];
-    if (![fileManager fileExistsAtPath:path] && ![fileManager createFileAtPath:path contents:nil attributes:@{ NSFilePosixPermissions: @0600 }]) return false;
-    chmod(path.fileSystemRepresentation, 0600);
-    *handle = [NSFileHandle fileHandleForWritingAtPath:path];
-    if (!*handle) return false;
-    [*handle seekToEndOfFile];
+static bool ValidateDirectoryFD(int descriptor, bool leaf) {
+    struct stat status = {};
+    if (fstat(descriptor, &status) != 0 || !S_ISDIR(status.st_mode)) return false;
+    if (leaf && status.st_uid != geteuid()) return false;
+    if (leaf) return (status.st_mode & 0777) == 0700;
+    return (status.st_mode & 0022) == 0;
+}
+
+static bool ValidateEventFD(int descriptor, size_t *size) {
+    struct stat status = {};
+    if (fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode)) return false;
+    if (status.st_uid != geteuid() || (status.st_mode & 0777) != 0600) return false;
+    if (status.st_size < 0 || (uint64_t)status.st_size > kDiagnosticRetentionBytes) return false;
+    if (size) *size = (size_t)status.st_size;
     return true;
 }
 
-static bool SerializeEvent(CAMLDiagnosticEvent *event) {
-    const char *buildId = event->installationRecord ? kDiagnosticBuildId : "";
-    const char *uuid = event->installationRecord ? gDiagnosticUUID : "";
-    // Keep the wire form below 256 bytes even when every bounded field is full.
-    uint64_t serializedMonotonic = event->monotonicMs % 10000000000000ULL;
-    uint32_t serializedWall = event->wallSeconds > UINT32_MAX ? UINT32_MAX : (uint32_t)event->wallSeconds;
-    int written = snprintf(event->serialized, sizeof(event->serialized),
-                           "{\"v\":1,\"t\":%llu,\"w\":%u,\"s\":\"%.12s\",\"p\":\"%.20s\",\"x\":\"%.12s\",\"n\":%d,\"g\":\"%.12s\",\"d\":\"%.20s\",\"i\":%d,\"a\":\"%.20s\",\"r\":%u,\"b\":\"%.25s\",\"u\":\"%.36s\"}\n",
-                           (unsigned long long)serializedMonotonic, serializedWall,
-                           event->site, event->packageName, event->pathPrefix,
-                           event->descriptionIsNew ? 1 : 0, event->state,
-                           event->descriptionClass, event->viewTag, event->ancestorClass,
-                           event->repeat, buildId, uuid);
-    return written > 0 && (size_t)written < sizeof(event->serialized);
-}
-
-static bool FlushRingLocked(void) {
-    if (gRingCount == 0) return true;
+static bool OpenDiagnosticDirectory(int *descriptor) {
+    if (!descriptor) return false;
+    *descriptor = -1;
     @try {
-        NSFileHandle *handle = nil;
-        if (!EnsureDiagnosticOutputFile(&handle)) return false;
-        for (uint32_t i = 0; i < gRingCount; ++i) {
-            NSData *data = [NSData dataWithBytes:gRing[i].serialized length:strlen(gRing[i].serialized)];
-            [handle writeData:data];
+        NSString *directory = DiagnosticOutputDirectory();
+        const char *source = directory.fileSystemRepresentation;
+        if (!source) return false;
+        char path[kDiagnosticPathCapacity] = {};
+        if (strlcpy(path, source, sizeof(path)) >= sizeof(path)) return false;
+
+        int current = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (current < 0 || !ValidateDirectoryFD(current, false)) {
+            if (current >= 0) close(current);
+            return false;
         }
-        [handle synchronizeFile];
-        [handle closeFile];
+        char *component = path;
+        while (*component == '/') ++component;
+        while (*component != '\0') {
+            char *nextComponent = strchr(component, '/');
+            if (nextComponent) {
+                *nextComponent = '\0';
+                char *after = nextComponent + 1;
+                while (*after == '/') ++after;
+                nextComponent = after;
+            }
+            if (component[0] == '\0' || strcmp(component, ".") == 0 || strcmp(component, "..") == 0) {
+                close(current);
+                return false;
+            }
+            bool leaf = nextComponent == NULL || *nextComponent == '\0';
+            int next = openat(current, component, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            if (next < 0 && errno == ENOENT) {
+                if (mkdirat(current, component, 0700) != 0 && errno != EEXIST) {
+                    close(current);
+                    return false;
+                }
+                next = openat(current, component, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            }
+            if (next < 0 || !ValidateDirectoryFD(next, leaf)) {
+                if (next >= 0) close(next);
+                close(current);
+                return false;
+            }
+            close(current);
+            current = next;
+            component = nextComponent;
+            if (component) while (*component == '/') ++component;
+        }
+        *descriptor = current;
+        return true;
     } @catch (...) {
         return false;
     }
-    gRingCount = 0;
+}
+
+static bool ReadExistingEvents(int directory, size_t *size) {
+    if (!size) return false;
+    *size = 0;
+    int descriptor = openat(directory, kDiagnosticEventFile, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) return errno == ENOENT;
+    size_t length = 0;
+    if (!ValidateEventFD(descriptor, &length)) {
+        close(descriptor);
+        return false;
+    }
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t count = pread(descriptor, gRetentionBuffer + offset, length - offset, (off_t)offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            close(descriptor);
+            return false;
+        }
+        offset += (size_t)count;
+    }
+    if (close(descriptor) != 0) return false;
+    *size = length;
     return true;
+}
+
+static size_t CompleteLinePrefix(size_t size) {
+    while (size > 0 && gRetentionBuffer[size - 1] != '\n') --size;
+    return size;
+}
+
+static bool WriteAll(int descriptor, const void *bytes, size_t length) {
+    const unsigned char *cursor = (const unsigned char *)bytes;
+    while (length > 0) {
+        ssize_t count = write(descriptor, cursor, length);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return false;
+        cursor += count;
+        length -= (size_t)count;
+    }
+    return true;
+}
+
+static int OpenTemporaryEvents(int directory) {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        int descriptor = openat(directory, kDiagnosticTempFile,
+                                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (descriptor >= 0) {
+            size_t size = 0;
+            if (ValidateEventFD(descriptor, &size) && size == 0) return descriptor;
+            close(descriptor);
+            unlinkat(directory, kDiagnosticTempFile, 0);
+            return -1;
+        }
+        if (errno != EEXIST || attempt != 0) return -1;
+        int stale = openat(directory, kDiagnosticTempFile, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (stale < 0) return -1;
+        size_t staleSize = 0;
+        bool safe = ValidateEventFD(stale, &staleSize);
+        bool closed = close(stale) == 0;
+        if (!safe || !closed || unlinkat(directory, kDiagnosticTempFile, 0) != 0) return -1;
+    }
+    return -1;
+}
+
+static size_t PendingEventBytes(void) {
+    size_t total = 0;
+    for (uint32_t i = 0; i < gRingCount; ++i) {
+        size_t length = strlen(gRing[i].serialized);
+        if (length > kDiagnosticRetentionBytes - total) return 0;
+        total += length;
+    }
+    return total;
+}
+
+// Atomic replace preserves the old complete file until the new complete file is durable.
+static bool FlushRingLocked(void) {
+    if (gRingCount == 0) return true;
+    int directory = -1;
+    int temporary = -1;
+    bool succeeded = false;
+    @try {
+        if (!OpenDiagnosticDirectory(&directory)) return false;
+        size_t existingSize = 0;
+        if (!ReadExistingEvents(directory, &existingSize)) return false;
+        existingSize = CompleteLinePrefix(existingSize);
+        size_t pendingSize = PendingEventBytes();
+        if (pendingSize == 0 || pendingSize > kDiagnosticRetentionBytes) return false;
+        size_t keepExisting = kDiagnosticRetentionBytes - pendingSize;
+        size_t firstExisting = existingSize > keepExisting ? existingSize - keepExisting : 0;
+        if (firstExisting > 0) {
+            while (firstExisting < existingSize && gRetentionBuffer[firstExisting - 1] != '\n') ++firstExisting;
+        }
+        temporary = OpenTemporaryEvents(directory);
+        if (temporary < 0) return false;
+        if (!WriteAll(temporary, gRetentionBuffer + firstExisting, existingSize - firstExisting)) return false;
+        for (uint32_t i = 0; i < gRingCount; ++i) {
+            size_t length = strlen(gRing[i].serialized);
+            if (!WriteAll(temporary, gRing[i].serialized, length)) return false;
+        }
+        if (fsync(temporary) != 0) return false;
+        if (close(temporary) != 0) {
+            temporary = -1;
+            return false;
+        }
+        temporary = -1;
+        if (renameat(directory, kDiagnosticTempFile, directory, kDiagnosticEventFile) != 0) return false;
+        if (fsync(directory) != 0) return false;
+        gRingCount = 0;
+        succeeded = true;
+    } @catch (...) {
+        succeeded = false;
+    }
+    if (temporary >= 0) {
+        close(temporary);
+        unlinkat(directory, kDiagnosticTempFile, 0);
+    }
+    if (directory >= 0) close(directory);
+    return succeeded;
 }
 
 static void DisableLoggingForSession(void) {
@@ -225,21 +392,17 @@ static void CopyPackageDetails(id description, char *packageName, size_t package
     packageName[0] = pathPrefix[0] = descriptionClass[0] = '\0';
     if (!description) return;
     CopySafe(descriptionClass, classCapacity, NSStringFromClass(object_getClass(description)));
-    @try {
-        if (![description respondsToSelector:@selector(packageURL)]) return;
-        id packageURL = ((id(*)(id, SEL))objc_msgSend)(description, @selector(packageURL));
-        if (![packageURL isKindOfClass:[NSURL class]]) return;
-        NSString *path = [(NSURL *)packageURL path];
-        NSString *last = [path lastPathComponent];
-        CopySafe(packageName, packageCapacity, [last stringByDeletingPathExtension]);
-        if ([path hasPrefix:@"/private/"]) CopySafeCString(pathPrefix, prefixCapacity, "private");
-        else if ([path hasPrefix:@"/var/"]) CopySafeCString(pathPrefix, prefixCapacity, "var");
-        else if ([path rangeOfString:@"/Containers/"].location != NSNotFound) CopySafeCString(pathPrefix, prefixCapacity, "app-container");
-        else if ([path hasPrefix:@"/Applications/"]) CopySafeCString(pathPrefix, prefixCapacity, "Applications");
-        else CopySafeCString(pathPrefix, prefixCapacity, "other");
-    } @catch (...) {
-        packageName[0] = pathPrefix[0] = '\0';
-    }
+    if (![description respondsToSelector:@selector(packageURL)]) return;
+    id packageURL = ((id(*)(id, SEL))objc_msgSend)(description, @selector(packageURL));
+    if (![packageURL isKindOfClass:[NSURL class]]) return;
+    NSString *path = [(NSURL *)packageURL path];
+    NSString *last = [path lastPathComponent];
+    CopySafe(packageName, packageCapacity, [last stringByDeletingPathExtension]);
+    if ([path hasPrefix:@"/private/"]) CopySafeCString(pathPrefix, prefixCapacity, "private");
+    else if ([path hasPrefix:@"/var/"]) CopySafeCString(pathPrefix, prefixCapacity, "var");
+    else if ([path rangeOfString:@"/Containers/"].location != NSNotFound) CopySafeCString(pathPrefix, prefixCapacity, "app-container");
+    else if ([path hasPrefix:@"/Applications/"]) CopySafeCString(pathPrefix, prefixCapacity, "Applications");
+    else CopySafeCString(pathPrefix, prefixCapacity, "other");
 }
 
 static void CopyStateDetails(id state, char *destination, size_t capacity) {
@@ -254,21 +417,16 @@ static void CopyStateDetails(id state, char *destination, size_t capacity) {
 
 static int32_t ViewTag(id view) {
     if (!view || ![view respondsToSelector:@selector(tag)]) return 0;
-    @try { return ((NSInteger(*)(id, SEL))objc_msgSend)(view, @selector(tag)); }
-    @catch (...) { return 0; }
+    return ((NSInteger(*)(id, SEL))objc_msgSend)(view, @selector(tag));
 }
 
 static void CopyAncestorClass(id view, char *destination, size_t capacity) {
     destination[0] = '\0';
     if (!view) return;
-    @try {
-        SEL selector = NSSelectorFromString(@"_viewControllerForAncestor");
-        if (![view respondsToSelector:selector]) return;
-        id controller = ((id(*)(id, SEL))objc_msgSend)(view, selector);
-        if (controller) CopySafe(destination, capacity, NSStringFromClass(object_getClass(controller)));
-    } @catch (...) {
-        destination[0] = '\0';
-    }
+    SEL selector = NSSelectorFromString(@"_viewControllerForAncestor");
+    if (![view respondsToSelector:selector]) return;
+    id controller = ((id(*)(id, SEL))objc_msgSend)(view, selector);
+    if (controller) CopySafe(destination, capacity, NSStringFromClass(object_getClass(controller)));
 }
 
 static bool DescriptionIsNewLocked(id view, id description) {
@@ -322,156 +480,216 @@ static bool TupleOrPairIsDuplicateLocked(CAMLDiagnosticEvent *event, bool *seria
     return false;
 }
 
-static void RecordEvent(const char *site, id view, id description, id state, bool verboseOnly, NSString *packageNameOverride) {
-    if (!BeginObserver(verboseOnly)) return;
-    @try {
-        CAMLDiagnosticEvent event = {};
-        event.monotonicMs = DiagnosticMonotonicMilliseconds();
-        event.wallSeconds = (uint64_t)NSDate.date.timeIntervalSince1970;
-        CopySafeCString(event.site, sizeof(event.site), site);
-        CopyPackageDetails(description, event.packageName, sizeof(event.packageName), event.pathPrefix,
-                           sizeof(event.pathPrefix), event.descriptionClass, sizeof(event.descriptionClass));
-        if ([packageNameOverride isKindOfClass:[NSString class]])
-            CopySafe(event.packageName, sizeof(event.packageName), packageNameOverride);
-        CopyStateDetails(state, event.state, sizeof(event.state));
-        CopyAncestorClass(view, event.ancestorClass, sizeof(event.ancestorClass));
-        event.viewTag = ViewTag(view);
-        os_unfair_lock_lock(&gDiagnosticLock);
-        event.descriptionIsNew = DescriptionIsNewLocked(view, description);
-        if (gSessionEventCount.load(std::memory_order_relaxed) >= kSessionEventCap) {
-            os_unfair_lock_unlock(&gDiagnosticLock);
-            EndObserver();
-            return;
-        }
-        event.repeat = 1;
-        event.installationRecord = strcmp(site, "install") == 0;
-        bool serializationFailed = false;
-        if (TupleOrPairIsDuplicateLocked(&event, &serializationFailed)) {
-            os_unfair_lock_unlock(&gDiagnosticLock);
-            if (serializationFailed) DisableLoggingForSession();
-            EndObserver();
-            return;
-        }
-        if (gRingCount >= kRingCapacity && !FlushRingLocked()) {
-            os_unfair_lock_unlock(&gDiagnosticLock);
-            DisableLoggingForSession();
-            EndObserver();
-            return;
-        }
-        if (!SerializeEvent(&event)) {
-            os_unfair_lock_unlock(&gDiagnosticLock);
-            DisableLoggingForSession();
-            EndObserver();
-            return;
-        }
-        gRing[gRingCount] = event;
-        gLastRingIndex = gRingCount;
-        ++gRingCount;
-        gSessionEventCount.fetch_add(1, std::memory_order_relaxed);
-        bool flush = gRingCount == kRingCapacity;
-        bool flushSucceeded = !flush || FlushRingLocked();
+static bool SerializeEvent(CAMLDiagnosticEvent *event) {
+    const char *buildId = event->installationRecord ? kDiagnosticBuildId : "";
+    const char *uuid = event->installationRecord ? gDiagnosticUUID : "";
+    uint64_t serializedMonotonic = event->monotonicMs % 10000000000000ULL;
+    uint32_t serializedWall = event->wallSeconds > UINT32_MAX ? UINT32_MAX : (uint32_t)event->wallSeconds;
+    int written = snprintf(event->serialized, sizeof(event->serialized),
+                           "{\"v\":1,\"t\":%llu,\"w\":%u,\"s\":\"%.12s\",\"p\":\"%.20s\",\"x\":\"%.12s\",\"n\":%d,\"g\":\"%.12s\",\"d\":\"%.20s\",\"i\":%d,\"a\":\"%.20s\",\"r\":%u,\"q\":%d,\"b\":\"%.25s\",\"u\":\"%.36s\"}\n",
+                           (unsigned long long)serializedMonotonic, serializedWall,
+                           event->site, event->packageName, event->pathPrefix,
+                           event->descriptionIsNew ? 1 : 0, event->state,
+                           event->descriptionClass, event->viewTag, event->ancestorClass,
+                           event->repeat, event->installationSucceeded ? 1 : 0, buildId, uuid);
+    return written > 0 && (size_t)written < sizeof(event->serialized);
+}
+
+static void RecordEventBody(const char *site, id view, id description, id state,
+                            NSString *packageNameOverride, bool installationRecord,
+                            bool installationSucceeded) {
+    CAMLDiagnosticEvent event = {};
+    event.monotonicMs = DiagnosticMonotonicMilliseconds();
+    event.wallSeconds = (uint64_t)NSDate.date.timeIntervalSince1970;
+    CopySafeCString(event.site, sizeof(event.site), site);
+    CopyPackageDetails(description, event.packageName, sizeof(event.packageName), event.pathPrefix,
+                       sizeof(event.pathPrefix), event.descriptionClass, sizeof(event.descriptionClass));
+    if ([packageNameOverride isKindOfClass:[NSString class]])
+        CopySafe(event.packageName, sizeof(event.packageName), packageNameOverride);
+    CopyStateDetails(state, event.state, sizeof(event.state));
+    CopyAncestorClass(view, event.ancestorClass, sizeof(event.ancestorClass));
+    event.viewTag = ViewTag(view);
+    event.installationRecord = installationRecord;
+    event.installationSucceeded = installationSucceeded;
+    os_unfair_lock_lock(&gDiagnosticLock);
+    event.descriptionIsNew = DescriptionIsNewLocked(view, description);
+    if (gSessionEventCount.load(std::memory_order_relaxed) >= kSessionEventCap) {
         os_unfair_lock_unlock(&gDiagnosticLock);
-        if (!flushSucceeded) DisableLoggingForSession();
+        return;
+    }
+    event.repeat = 1;
+    bool serializationFailed = false;
+    if (TupleOrPairIsDuplicateLocked(&event, &serializationFailed)) {
+        os_unfair_lock_unlock(&gDiagnosticLock);
+        if (serializationFailed) DisableLoggingForSession();
+        return;
+    }
+    if (gRingCount >= kRingCapacity && !FlushRingLocked()) {
+        os_unfair_lock_unlock(&gDiagnosticLock);
+        DisableLoggingForSession();
+        return;
+    }
+    if (!SerializeEvent(&event)) {
+        os_unfair_lock_unlock(&gDiagnosticLock);
+        DisableLoggingForSession();
+        return;
+    }
+    gRing[gRingCount] = event;
+    gLastRingIndex = gRingCount;
+    ++gRingCount;
+    gSessionEventCount.fetch_add(1, std::memory_order_relaxed);
+    bool flush = gRingCount == kRingCapacity;
+    bool flushSucceeded = !flush || FlushRingLocked();
+    os_unfair_lock_unlock(&gDiagnosticLock);
+    if (!flushSucceeded) DisableLoggingForSession();
+}
+
+typedef void (*CAMLDiagnosticBody)(void *context);
+
+static void RunObserver(bool verboseOnly, CAMLDiagnosticBody body, void *context) {
+    bool entered = false;
+    @try {
+        if (!BeginObserver(verboseOnly)) return;
+        entered = true;
+        body(context);
     } @catch (...) {
         DisableLoggingForSession();
+    } @finally {
+        if (entered) EndObserver();
     }
-    EndObserver();
 }
 
+struct CAMLPackageContext { id view; id description; const char *site; };
+static void ObservePackageBody(void *rawContext) {
+    CAMLPackageContext *context = (CAMLPackageContext *)rawContext;
+    RecordEventBody(context->site, context->view, context->description, nil, nil, false, false);
+}
 static void ObservePackage(id view, id description, const char *site) {
-    RecordEvent(site, view, description, nil, false, nil);
+    CAMLPackageContext context = { view, description, site };
+    RunObserver(false, ObservePackageBody, &context);
 }
 
-static void ObserveState(id view, id state, const char *site) {
+struct CAMLStateContext { id view; id state; const char *site; };
+static void ObserveStateBody(void *rawContext) {
+    CAMLStateContext *context = (CAMLStateContext *)rawContext;
     id description = nil;
-    @try {
-        SEL selector = @selector(glyphPackageDescription);
-        if ([view respondsToSelector:selector]) description = ((id(*)(id, SEL))objc_msgSend)(view, selector);
-    } @catch (...) {
-        description = nil;
-    }
-    RecordEvent(site, view, description, state, false, nil);
+    SEL selector = @selector(glyphPackageDescription);
+    if ([context->view respondsToSelector:selector])
+        description = ((id(*)(id, SEL))objc_msgSend)(context->view, selector);
+    RecordEventBody(context->site, context->view, description, context->state, nil, false, false);
+}
+static void ObserveState(id view, id state, const char *site) {
+    CAMLStateContext context = { view, state, site };
+    RunObserver(false, ObserveStateBody, &context);
 }
 
+struct CAMLFactoryContext { id packageName; id bundle; };
+static void ObserveFactoryBody(void *rawContext) {
+    CAMLFactoryContext *context = (CAMLFactoryContext *)rawContext;
+    NSString *packageName = [context->packageName isKindOfClass:[NSString class]] ? context->packageName : nil;
+    RecordEventBody("factory", nil, nil, nil, packageName, false, false);
+    (void)context->bundle;
+}
 static void ObserveFactory(id packageName, id bundle) {
-    // Factory events deliberately omit package URLs and use only a bounded package-name value.
-    RecordEvent("factory", nil, nil, nil, true, [packageName isKindOfClass:[NSString class]] ? packageName : nil);
-    (void)bundle;
+    CAMLFactoryContext context = { packageName, bundle };
+    RunObserver(true, ObserveFactoryBody, &context);
 }
 
 static void CAMLButtonPackageHook(id self, SEL cmd, id description) {
     ObservePackage(self, description, "button-view");
-    ((void(*)(id, SEL, id))gOriginalButtonPackage)(self, cmd, description);
+    if (gOriginalButtonPackage) ((void(*)(id, SEL, id))gOriginalButtonPackage)(self, cmd, description);
 }
 
 static void CAMLRoundPackageHook(id self, SEL cmd, id description) {
     ObservePackage(self, description, "round-button");
-    ((void(*)(id, SEL, id))gOriginalRoundPackage)(self, cmd, description);
+    if (gOriginalRoundPackage) ((void(*)(id, SEL, id))gOriginalRoundPackage)(self, cmd, description);
 }
 
 static void CAMLSliderPackageHook(id self, SEL cmd, id description) {
     ObservePackage(self, description, "slider-view");
-    ((void(*)(id, SEL, id))gOriginalSliderPackage)(self, cmd, description);
+    if (gOriginalSliderPackage) ((void(*)(id, SEL, id))gOriginalSliderPackage)(self, cmd, description);
 }
 
 static id CAMLFactoryHook(id self, SEL cmd, id packageName, id bundle) {
     ObserveFactory(packageName, bundle);
-    return ((id(*)(id, SEL, id, id))gOriginalFactory)(self, cmd, packageName, bundle);
+    return gOriginalFactory ? ((id(*)(id, SEL, id, id))gOriginalFactory)(self, cmd, packageName, bundle) : nil;
 }
 
 static void CAMLButtonStateHook(id self, SEL cmd, id state) {
     ObserveState(self, state, "glyph-state");
-    ((void(*)(id, SEL, id))gOriginalButtonState)(self, cmd, state);
+    if (gOriginalButtonState) ((void(*)(id, SEL, id))gOriginalButtonState)(self, cmd, state);
 }
 
 static void CAMLSliderStateHook(id self, SEL cmd, id state) {
     ObserveState(self, state, "glyph-state");
-    ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);
+    if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);
 }
 
-extern "C" void CAMLDiagnosticFlushAtDismiss(void) {
-    if (!gDiagnosticEnabled.load(std::memory_order_acquire) || gLoggingDisabled.load(std::memory_order_acquire)) return;
+struct CAMLInstallContext { const char *site; bool succeeded; };
+static void RecordInstallStatusBody(void *rawContext) {
+    CAMLInstallContext *context = (CAMLInstallContext *)rawContext;
+    RecordEventBody(context->site, nil, nil, nil, nil, true, context->succeeded);
+}
+static void RecordInstallStatus(const CAMLDiagnosticSite *site, bool succeeded) {
+    CAMLInstallContext context = { site->label, succeeded };
+    RunObserver(false, RecordInstallStatusBody, &context);
+}
+
+static void FlushObserverBody(void *context) {
+    (void)context;
     os_unfair_lock_lock(&gDiagnosticLock);
     bool succeeded = FlushRingLocked();
     os_unfair_lock_unlock(&gDiagnosticLock);
     if (!succeeded) DisableLoggingForSession();
 }
 
-struct CAMLDiagnosticSite {
-    NSString *className;
-    SEL selector;
-    const char *encoding;
-    IMP replacement;
-    IMP *original;
-    bool classMethod;
-};
+extern "C" void CAMLDiagnosticFlushAtDismiss(void) {
+    RunObserver(false, FlushObserverBody, nil);
+}
 
-static CAMLDiagnosticSite gSites[] = {
-    { @"CCUIButtonModuleView", @selector(setGlyphPackageDescription:), "v24@0:8@16", (IMP)CAMLButtonPackageHook, &gOriginalButtonPackage, false },
-    { @"CCUIRoundButton", @selector(setGlyphPackageDescription:), "v24@0:8@16", (IMP)CAMLRoundPackageHook, &gOriginalRoundPackage, false },
-    { @"CCUIBaseSliderView", @selector(setGlyphPackageDescription:), "v24@0:8@16", (IMP)CAMLSliderPackageHook, &gOriginalSliderPackage, false },
-    { @"CCUICAPackageDescription", @selector(descriptionForPackageNamed:inBundle:), "@32@0:8@16@24", (IMP)CAMLFactoryHook, &gOriginalFactory, true },
-    { @"CCUIButtonModuleView", @selector(setGlyphState:), "v24@0:8@16", (IMP)CAMLButtonStateHook, &gOriginalButtonState, false },
-    { @"CCUIBaseSliderView", @selector(setGlyphState:), "v24@0:8@16", (IMP)CAMLSliderStateHook, &gOriginalSliderState, false },
-};
-
-static bool InstallSite(const CAMLDiagnosticSite &site) {
-    Class target = objc_getClass(site.className.UTF8String);
+static bool InstallSite(const CAMLDiagnosticSite *site) {
+    if (!site || !site->className || !site->selectorName || !site->encoding || !site->replacement || !site->original) return false;
+    Class target = objc_getClass(site->className);
     if (!target) return false;
-    Method method = site.classMethod ? class_getClassMethod(target, site.selector) : class_getInstanceMethod(target, site.selector);
+    SEL selector = sel_registerName(site->selectorName);
+    Method method = site->classMethod ? class_getClassMethod(target, selector) : class_getInstanceMethod(target, selector);
     if (!method) return false;
     const char *runtimeEncoding = method_getTypeEncoding(method);
-    if (!ABIShapeMatches(runtimeEncoding, site.encoding)) return false;
-    Class hookClass = site.classMethod ? object_getClass(target) : target;
-    MSHookMessageEx(hookClass, site.selector, site.replacement, site.original);
-    return *site.original != NULL;
+    if (!ABIShapeMatches(runtimeEncoding, site->encoding)) return false;
+    Class hookClass = site->classMethod ? object_getClass(target) : target;
+    MSHookMessageEx(hookClass, selector, site->replacement, site->original);
+    return *site->original != NULL;
+}
+
+// POD descriptors are populated synchronously by the caller before the installer sees them.
+__attribute__((noinline, used)) static size_t BuildCAMLDiagnosticSites(CAMLDiagnosticSite *sites, size_t capacity) {
+    if (!sites || capacity < kDiagnosticSiteCount) return 0;
+    sites[0] = { "CCUIButtonModuleView", "setGlyphPackageDescription:", "v24@0:8@16", "button-package", (IMP)CAMLButtonPackageHook, &gOriginalButtonPackage, false };
+    sites[1] = { "CCUIRoundButton", "setGlyphPackageDescription:", "v24@0:8@16", "round-package", (IMP)CAMLRoundPackageHook, &gOriginalRoundPackage, false };
+    sites[2] = { "CCUIBaseSliderView", "setGlyphPackageDescription:", "v24@0:8@16", "slider-package", (IMP)CAMLSliderPackageHook, &gOriginalSliderPackage, false };
+    sites[3] = { "CCUICAPackageDescription", "descriptionForPackageNamed:inBundle:", "@32@0:8@16@24", "factory", (IMP)CAMLFactoryHook, &gOriginalFactory, true };
+    sites[4] = { "CCUIButtonModuleView", "setGlyphState:", "v24@0:8@16", "button-state", (IMP)CAMLButtonStateHook, &gOriginalButtonState, false };
+    sites[5] = { "CCUIBaseSliderView", "setGlyphState:", "v24@0:8@16", "slider-state", (IMP)CAMLSliderStateHook, &gOriginalSliderState, false };
+    return kDiagnosticSiteCount;
+}
+
+__attribute__((noinline, used)) static uint32_t InstallCAMLDiagnosticSites(CAMLDiagnosticSite *sites, size_t count) {
+    uint32_t installedMask = 0;
+    for (size_t index = 0; index < count; ++index) {
+        bool succeeded = InstallSite(&sites[index]);
+        if (succeeded) installedMask |= (uint32_t)1 << index;
+        RecordInstallStatus(&sites[index], succeeded);
+    }
+    gDiagnosticInstalledMask.store(installedMask, std::memory_order_release);
+    return installedMask;
 }
 
 static void RefreshDiagnosticPreferences(void) {
     @try {
-        NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:kDiagnosticPrefsDomain];
-        gDiagnosticEnabled.store([preferences boolForKey:kDiagnosticEnabledKey], std::memory_order_release);
-        gDiagnosticVerbose.store([preferences boolForKey:kDiagnosticVerboseKey], std::memory_order_release);
+        NSString *domain = [NSString stringWithUTF8String:kDiagnosticPrefsDomain];
+        NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:domain];
+        gDiagnosticEnabled.store([preferences boolForKey:[NSString stringWithUTF8String:kDiagnosticEnabledKey]], std::memory_order_release);
+        gDiagnosticVerbose.store([preferences boolForKey:[NSString stringWithUTF8String:kDiagnosticVerboseKey]], std::memory_order_release);
     } @catch (...) {
         gDiagnosticEnabled.store(false, std::memory_order_release);
         gDiagnosticVerbose.store(false, std::memory_order_release);
@@ -489,11 +707,11 @@ __attribute__((constructor)) static void InitializeCAMLDiagnostic(void) {
         DiagnosticUUID();
         RefreshDiagnosticPreferences();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-                                        DiagnosticPreferencesChanged, (__bridge CFStringRef)kDiagnosticPrefsChanged,
+                                        DiagnosticPreferencesChanged, kDiagnosticPrefsChanged,
                                         NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-        for (const CAMLDiagnosticSite &site : gSites) (void)InstallSite(site);
-        // The hook chain is installed once; disabled/default and preference transitions are no-op observer bodies.
-        if (gDiagnosticEnabled.load(std::memory_order_acquire)) RecordEvent("install", nil, nil, nil, false, nil);
+        CAMLDiagnosticSite sites[kDiagnosticSiteCount] = {};
+        size_t siteCount = BuildCAMLDiagnosticSites(sites, kDiagnosticSiteCount);
+        if (siteCount == kDiagnosticSiteCount) (void)InstallCAMLDiagnosticSites(sites, siteCount);
     } @catch (...) {
         DisableLoggingForSession();
     }

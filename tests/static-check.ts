@@ -66,7 +66,7 @@ const mapping: Record<string, string> = {
   "com.apple.VoiceMemos": "VoiceMemos",
   "com.apple.Magnifier": "Magnifier",
 };
-const mappingEntries = new Map([...source.matchAll(/@"([^\"]+)"\s*:\s*@"([^\"]+)"/g)].map((match) => [match[1], match[2]]));
+const mappingEntries = new Map([...source.matchAll(/@"(com\.apple\.[A-Za-z0-9.]+)"\s*:\s*@"([A-Za-z0-9]+)"/g)].map((match) => [match[1], match[2]]));
 assert(mappingEntries.size === Object.keys(mapping).length, "icon mapping has unexpected or missing identifiers");
 for (const [identifier, icon] of Object.entries(mapping)) assert(mappingEntries.get(identifier) === icon, `mapping is not exact: ${identifier} -> ${icon}`);
 
