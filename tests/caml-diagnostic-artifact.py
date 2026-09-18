@@ -49,6 +49,38 @@ def source_order(source: str) -> None:
         raise SystemExit("observer contexts do not use borrowed ownership")
 
 
+def observer_instruction_ranges(symbols: str, disassembly: str) -> dict[str, str]:
+    address_by_symbol: dict[str, int] = {}
+    all_addresses: list[int] = []
+    for line in symbols.splitlines():
+        match = re.match(r"^([0-9a-fA-F]+)\s+.*\s+(\S+)$", line.strip())
+        if match is None:
+            continue
+        address = int(match.group(1), 16)
+        all_addresses.append(address)
+        name = match.group(2).lstrip("_")
+        for observer in ("ObservePackage", "ObserveState", "ObserveFactory"):
+            if name.endswith(observer):
+                address_by_symbol[observer] = address
+    if len(address_by_symbol) != 3:
+        raise SystemExit("generated observer symbol addresses are incomplete")
+    sorted_addresses = sorted(set(all_addresses))
+    instruction_lines: list[tuple[int, str]] = []
+    for line in disassembly.splitlines():
+        match = re.match(r"^\s*([0-9a-fA-F]{8,})\s+", line)
+        if match is not None:
+            instruction_lines.append((int(match.group(1), 16), line))
+    ranges: dict[str, str] = {}
+    for observer, start in address_by_symbol.items():
+        following = [address for address in sorted_addresses if address > start]
+        end = following[0] if following else start + 0x1000
+        lines = [line for address, line in instruction_lines if start <= address < end]
+        if not lines:
+            raise SystemExit(f"generated disassembly has no instruction range for {observer}")
+        ranges[observer] = "\n".join(lines)
+    return ranges
+
+
 def verify_slice(binary: Path, require_symbols: bool) -> None:
     strings = run(["strings", str(binary)])
     missing = [literal for literal in EXPECTED_LITERALS if literal not in strings]
@@ -61,10 +93,12 @@ def verify_slice(binary: Path, require_symbols: bool) -> None:
         for symbol in ("ObservePackage", "ObserveState", "ObserveFactory"):
             if symbol not in symbols:
                 raise SystemExit(f"{binary}: observer boundary symbol {symbol} is absent from generated code")
-        # Keep the disassembly step in the artifact gate. Static borrowed-context and
-        # source-order assertions are authoritative; otool output formats differ across Xcode.
-        if not run(["otool", "-tvV", str(binary)]):
-            raise SystemExit(f"{binary}: generated text disassembly is empty")
+        disassembly = run(["otool", "-tvV", str(binary)])
+        ranges = observer_instruction_ranges(symbols, disassembly)
+        forbidden = ("objc_retain", "objc_storeStrong", "objc_release")
+        for observer, body in ranges.items():
+            if any(token in body for token in forbidden):
+                raise SystemExit(f"{binary}: observer entry {observer} performs ARC ownership work before RunObserver")
     if re.search(r"GLOBAL__sub_I_CAMLDiagnostic", symbols):
         raise SystemExit(f"{binary}: legacy CAML translation-unit global initializer is present")
     load_commands = run(["otool", "-l", str(binary)])
