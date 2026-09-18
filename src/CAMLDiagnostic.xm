@@ -624,7 +624,7 @@ static void ObservePackageBody(void *rawContext) {
     CAMLPackageContext *context = (CAMLPackageContext *)rawContext;
     RecordEventBody(context->site, context->view, context->description, nil, nil, false, false);
 }
-__attribute__((noinline, used)) static void ObservePackage(id view, id description, const char *site) {
+__attribute__((noinline, used)) static void ObservePackage(__unsafe_unretained id view, __unsafe_unretained id description, const char *site) {
     CAMLPackageContext context = { view, description, site };
     RunObserver(false, ObservePackageBody, &context);
 }
@@ -638,7 +638,7 @@ static void ObserveStateBody(void *rawContext) {
         description = ((id(*)(id, SEL))objc_msgSend)(context->view, selector);
     RecordEventBody(context->site, context->view, description, context->state, nil, false, false);
 }
-__attribute__((noinline, used)) static void ObserveState(id view, id state, const char *site) {
+__attribute__((noinline, used)) static void ObserveState(__unsafe_unretained id view, __unsafe_unretained id state, const char *site) {
     CAMLStateContext context = { view, state, site };
     RunObserver(false, ObserveStateBody, &context);
 }
@@ -649,7 +649,7 @@ static void ObserveFactoryBody(void *rawContext) {
     NSString *packageName = [context->packageName isKindOfClass:[NSString class]] ? context->packageName : nil;
     RecordEventBody("factory", nil, nil, nil, packageName, false, false);
 }
-__attribute__((noinline, used)) static void ObserveFactory(id packageName) {
+__attribute__((noinline, used)) static void ObserveFactory(__unsafe_unretained id packageName) {
     CAMLFactoryContext context = { packageName };
     RunObserver(true, ObserveFactoryBody, &context);
 }

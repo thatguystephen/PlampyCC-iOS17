@@ -100,6 +100,8 @@ def source_contract(source: str) -> None:
     assert_true("RunObserver(false, ObservePackageBody" in source and "RunObserver(false, ObserveStateBody" in source, "setter observers are not guarded at their outer boundary")
     assert_true("RunObserver(true, ObserveFactoryBody" in source, "verbose factory observer is not guarded before type-check messaging")
     assert_true("RunObserver(false, FlushObserverBody" in source, "dismiss flush is not behind the observer guard")
+    for signature in ("ObservePackage(__unsafe_unretained id view, __unsafe_unretained id description", "ObserveState(__unsafe_unretained id view, __unsafe_unretained id state", "ObserveFactory(__unsafe_unretained id packageName"):
+        assert_true(signature in source, f"observer entry is not explicitly borrowed: {signature}")
     assert_true("objc_msgSend" not in function_body(source, "ObserveState"), "state getter messaging escaped its guarded body")
     assert_true("respondsToSelector" not in function_body(source, "ObserveState"), "state type-check messaging escaped its guarded body")
     assert_true("isKindOfClass" not in function_body(source, "ObserveFactory"), "factory type-check messaging escaped its guarded body")
