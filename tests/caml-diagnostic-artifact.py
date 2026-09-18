@@ -60,7 +60,7 @@ def observer_instruction_ranges(symbols: str, disassembly: str) -> dict[str, str
         all_addresses.append(address)
         name = match.group(2).lstrip("_")
         for observer in ("ObservePackage", "ObserveState", "ObserveFactory"):
-            if name.endswith(observer):
+            if observer in name and f"{observer}Body" not in name:
                 address_by_symbol[observer] = address
     if len(address_by_symbol) != 3:
         raise SystemExit("generated observer symbol addresses are incomplete")
