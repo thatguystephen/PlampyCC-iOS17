@@ -79,10 +79,10 @@ jobs:
             collect_unstripped "$arch" PlampyCC "dist/symbols/$arch/PlampyCC"
           done
           test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 4
-          python3 -B tests/caml-diagnostic-artifact.py dist
           make clean package FINALPACKAGE=1 STRIP=1 THEOS_PACKAGE_SCHEME=rootless
           find packages -type f -name '*.deb' -exec cp {} dist/packages/ \;
           test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
+          python3 -B tests/caml-diagnostic-artifact.py dist
           git rev-parse HEAD > dist/source-commit.txt
           xcodebuild -version > dist/xcode-version.txt
           {

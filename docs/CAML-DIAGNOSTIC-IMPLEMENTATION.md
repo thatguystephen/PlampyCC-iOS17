@@ -33,9 +33,9 @@ When enabled, bounded events are appended to the tweak-owned rootless path:
 
 The directory is created with mode `0700`; the file is restricted to `0600`. Events use fixed compact JSON keys (`v` version, `t` monotonic milliseconds, `w` wall-clock seconds, `s` site, `p` package name, `x` path prefix, `n` description-is-new, `g` glyph state, `d` description class, `i` view tag, `a` ancestor class, `r` repeat, `q` per-site installation success, `b` build ID, `u` Mach-O UUID).
 
-`x` is a coarse path classification (`private`, `var`, `app-container`, `Applications`, or `other`). Full paths, package URLs, CAML/XML contents, asset bytes, user data, and raw pointer values are never serialized. Package names and class/state strings are sanitized and bounded.
+`x` is a coarse path classification (`private`, `var`, `app-container`, `Applications`, or `other`). Full paths, package URLs, CAML/XML contents, asset bytes, user data, and raw pointer values are never serialized. Package names, class names, and state strings are emitted only when they exactly match the fixed approved-value allowlists; every other value becomes `unknown`, `unknown-class`, or `unknown-state`.
 
-The in-memory ring contains at most 512 events. Identical `(site, pkg, state)` tuples are suppressed for 1000 ms; repeats inside 100 ms update one event's `repeat` count. Matching `(site, pkg)` repeats inside 100 ms are also collapsed. A process-session cap of 2000 accepted events prevents unbounded growth. Flushes use descriptor-based `openat`/`fstat`/`O_NOFOLLOW` confinement, reject unsafe owners/modes/non-regular files, write a complete bounded replacement to a temporary file, `fsync`, atomically `renameat` it, and `fsync` the directory. Restart recovery discards an incomplete final line and retains at most the newest 1 MiB of complete records. No synchronous queue dispatch is used.
+The in-memory ring contains at most 512 events. Identical `(site, pkg, state)` tuples are suppressed for 1000 ms; repeats inside 100 ms update one event's `repeat` count. Matching `(site, pkg)` repeats inside 100 ms are also collapsed. A process-session cap of 2000 accepted events prevents unbounded growth. Flushes use descriptor-based `openat`/`fstat`/`O_NOFOLLOW` confinement, reject unsafe owners/modes/non-regular files, write a complete bounded replacement to a temporary file, `fsync`, atomically `renameat` it, and `fsync` the directory. Restart recovery discards an incomplete final line and retains at most the newest 1 MiB of complete records. C++ RAII owns every directory/temp descriptor; a temp is unlinked on every pre-rename failure/exception, while a post-rename directory-fsync failure leaves the complete committed file and disables further logging. No synchronous queue dispatch is used.
 
 ## Build ID and provenance
 
@@ -47,14 +47,14 @@ Final workflow run URL/ID and downloaded artifact verification are recorded in t
 
 ## Verification performed locally
 
-`tests/caml-diagnostic-contract.py` models disabled and enabled pass-through, original-call identity/count, unchanged factory returns, ABI normalization and mismatch skipping, missing-site fail-open behavior, deduplication, ring/session bounds, reentrancy, logger failure isolation, redacted event fields, and the no-device workflow contract. The existing `src/Tweak.xm` functional behavior remains unchanged apart from the no-op-when-disabled dismissal flush seam; diagnostics are isolated in the added module.
+`tests/caml-diagnostic-contract.py` exercises the production-sensitive source contract and its mutation matrix for each guard predicate, runtime metadata/install operation, descriptor traversal, sensitive filesystem operation, exact original count/arguments/return, allowlist boundary, deduplication, ring/session bounds, EINTR, all atomic-write faults, stale-temp/incomplete-tail recovery, and retention saturation. Its host filesystem cases are supplemental fault probes; the production source is the authority and each weakened production primitive is required to fail the contract. `tests/caml-diagnostic-artifact.py` audits both unstripped slices and thin slices extracted from the final packaged `.deb`. The existing `src/Tweak.xm` functional behavior remains unchanged apart from the no-op-when-disabled dismissal flush seam; diagnostics are isolated in the added module.
 
 ## Known limitations
 
 - This is not a functional CAML replacement and does not prove package coverage, animation parity, or third-party bundle loading.
 - Exact runtime class coverage, concrete slider subclass use, state-handler ordering, and arbitrary bundle behavior remain device questions.
 - The diagnostic does not dynamically unhook; preference transitions affect observer behavior at a safe subsequent hook boundary.
-- The current workflow can prove packaging and symbols only. It cannot substitute for a separately authorized iPhone test.
+- The workflow proves source contracts, generated observer-boundary code, packaging, and both final arm64/arm64e slices. It cannot substitute for a separately authorized iPhone runtime test.
 
 ## Exact future device-test gate
 

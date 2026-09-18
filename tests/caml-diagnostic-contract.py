@@ -57,20 +57,19 @@ def source_contract(source: str) -> None:
     assert_true(set(site_rows) == expected_sites and len(site_rows) == 6, "deterministic six-site descriptor table is incomplete")
     assert_true("gSites" not in source, "descriptor storage must not rely on a dynamically initialized global site table")
     assert_true("__attribute__((noinline, used)) static size_t BuildCAMLDiagnosticSites" in source, "descriptor builder must remain visible to artifact-order checks")
-    assert_true("__attribute__((noinline, used)) static uint32_t InstallCAMLDiagnosticSites" in source, "site installer must remain visible to artifact-order checks")
+    assert_true("__attribute__((noinline, used)) static void InstallCAMLDiagnosticSites" in source, "site installer must remain visible to artifact-order checks")
     constructor = function_body(source, "InitializeCAMLDiagnostic")
     assert_true(constructor.index("CAMLDiagnosticSite sites[kDiagnosticSiteCount] = {}") < constructor.index("BuildCAMLDiagnosticSites"), "descriptor storage is not allocated before initialization")
     assert_true(constructor.index("BuildCAMLDiagnosticSites") < constructor.index("InstallCAMLDiagnosticSites"), "installer can observe descriptors before they are populated")
-    assert_true("gDiagnosticInstalledMask.store(installedMask" in source, "installation status is not retained")
     assert_true("RecordInstallStatus(&sites[index], succeeded)" in source, "per-site installation status is not recorded from the actual result")
     assert_true("event->installationSucceeded ? 1 : 0" in source, "installation status is not serialized truthfully")
-    assert_true("kDiagnosticInstalledMask" not in source, "status assertion typo should not mask the real status symbol")
+    assert_true("gDiagnosticInstalledMask" not in source, "dead installed-mask state remains")
 
     expected_calls = {
         "CAMLButtonPackageHook": ("ObservePackage(self, description, \"button-view\")", "gOriginalButtonPackage)(self, cmd, description)"),
         "CAMLRoundPackageHook": ("ObservePackage(self, description, \"round-button\")", "gOriginalRoundPackage)(self, cmd, description)"),
         "CAMLSliderPackageHook": ("ObservePackage(self, description, \"slider-view\")", "gOriginalSliderPackage)(self, cmd, description)"),
-        "CAMLFactoryHook": ("ObserveFactory(packageName, bundle)", "gOriginalFactory)(self, cmd, packageName, bundle)"),
+        "CAMLFactoryHook": ("ObserveFactory(packageName)", "gOriginalFactory)(self, cmd, packageName, bundle)"),
         "CAMLButtonStateHook": ("ObserveState(self, state, \"glyph-state\")", "gOriginalButtonState)(self, cmd, state)"),
         "CAMLSliderStateHook": ("ObserveState(self, state, \"glyph-state\")", "gOriginalSliderState)(self, cmd, state)"),
     }
@@ -90,6 +89,14 @@ def source_contract(source: str) -> None:
     assert_true(run_observer.index("BeginObserver(verboseOnly)") < run_observer.index("entered = true") < run_observer.index("body(context)"), "observer body can message before enabled/verbose/reentrancy guard")
     assert_true("@catch (...)" in run_observer and "@finally" in run_observer and "EndObserver()" in run_observer, "observer boundary does not isolate exceptions and reliably release the guard")
     assert_true("DisableLoggingForSession();" in run_observer, "observer exceptions do not disable the diagnostic session")
+    begin = function_body(source, "BeginObserver")
+    for predicate in ("gInDiagnosticObserver", "gLoggingDisabled", "gDiagnosticEnabled", "gDiagnosticVerbose"):
+        assert_true(predicate in begin, f"observer guard omits {predicate}")
+    assert_true(begin.index("gInDiagnosticObserver") < begin.index("gDiagnosticEnabled"), "reentrancy is checked after enabled policy")
+    assert_true("@unsafe_unretained" not in source and "__unsafe_unretained id" in source, "observer contexts permit ARC ownership outside the guard")
+    assert_true("struct CAMLFactoryContext { __unsafe_unretained id packageName; };" in source, "unused bundle ownership remains in the factory observer context")
+    for name in ("ObservePackage", "ObserveState", "ObserveFactory"):
+        assert_true("__attribute__((noinline, used)) static void " + name in source, f"{name} is not artifact-visible for ARC boundary review")
     assert_true("RunObserver(false, ObservePackageBody" in source and "RunObserver(false, ObserveStateBody" in source, "setter observers are not guarded at their outer boundary")
     assert_true("RunObserver(true, ObserveFactoryBody" in source, "verbose factory observer is not guarded before type-check messaging")
     assert_true("RunObserver(false, FlushObserverBody" in source, "dismiss flush is not behind the observer guard")
@@ -100,14 +107,31 @@ def source_contract(source: str) -> None:
     assert_true("std::atomic<bool> gDiagnosticEnabled(false)" in source and "std::atomic<bool> gDiagnosticVerbose(false)" in source, "diagnostic defaults are not disabled")
     assert_true('kDiagnosticBuildId[] = "plampycc-caml-observer-v1"' in source and '%.25s' in source, "install provenance build ID is truncated or missing")
     assert_true("kRingCapacity = 512" in source and "kSerializedEventCapacity = 256" in source and "kSessionEventCap = 2000" in source, "bounded logging constants are missing")
+    assert_true("kRepeatCollapseWindowMs = 100" in source and "kTupleDedupWindowMs = 1000" in source and "TupleOrPairIsDuplicateLocked" in source, "deduplication bounds are missing")
+    assert_true("gSessionEventCount.fetch_add" in source and "gRingCount >= kRingCapacity" in source and "gSessionEventCount.load" in source, "ring/session bound behavior is missing")
     assert_true("kDiagnosticRetentionBytes = 1024 * 1024" in source, "explicit diagnostic retention limit is missing")
-    assert_true("openat" in source and "O_NOFOLLOW" in source and "fstat" in source and "S_ISREG" in source, "descriptor-based no-follow regular-file validation is missing")
-    assert_true("renameat" in source and "fsync(temporary)" in source and "fsync(directory)" in source, "atomic crash-recoverable output protocol is missing")
+    assert_true("openat(" in source and "O_NOFOLLOW" in source and "fstat(" in source and "S_ISREG" in source, "descriptor-based no-follow regular-file validation is missing")
+    assert_true("renameat(" in source and "fsync(temporaryGuard.get())" in source and "fsync(directory)" in source, "atomic crash-recoverable output protocol is missing")
+    for syscall in ("mkdirat(", "pread(", "write(", "unlinkat(", "close(", "errno == EINTR"):
+        assert_true(syscall in source, f"filesystem fault boundary omits {syscall}")
     assert_true("status.st_uid != geteuid()" in source and "(status.st_mode & 0777) != 0600" in source, "owner and restrictive event-file permission validation is missing")
     assert_true("status.st_mode & 0777) == 0700" in source, "diagnostic directory permission validation is missing")
     assert_true("kDiagnosticTempFile" in source and "CompleteLinePrefix" in source, "interrupted-write recovery is missing")
+    walker = function_body(source, "OpenDiagnosticDirectory")
+    assert_true("char *cursor = path" in walker and "while (*cursor == '/') ++cursor" in walker, "production component walker does not own a non-NULL cursor")
+    assert_true("bool leaf = *cursor == '\\0'" in walker and "if (leaf) break;" in walker, "final component does not terminate the production walker")
+    assert_true("component = nextComponent" not in walker, "production walker retains the NULL traversal bug")
+    for primitive in ("CAMLScopedFD", "CAMLScopedTempFile", "~CAMLScopedTempFile", "temporaryDescriptor", "temporaryGuard.Commit()"):
+        assert_true(primitive in source, f"deterministic cleanup primitive {primitive} is missing")
+    assert_true("if (!temporaryGuard.Valid()) return false" in source, "temp ownership is not explicit after validated acquisition")
+    install = function_body(source, "InstallSite")
+    for operation in ("objc_getClass", "sel_registerName", "class_getClassMethod", "class_getInstanceMethod", "method_getTypeEncoding", "ABIShapeMatches", "MSHookMessageEx", "*site->original != NULL"):
+        assert_true(operation in install, f"runtime installation behavior omits {operation}")
     assert_true("NSFileHandle" not in source and "fileExistsAtPath" not in source and "chmod(path.fileSystemRepresentation" not in source, "path-based output API remains in the diagnostic")
-    assert_true("(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'" in source and ": '_'" in source, "production whitelist redaction is missing")
+    for allowlist in ("kApprovedPackages", "kApprovedStates", "kApprovedClasses"):
+        assert_true(allowlist in source, f"approved-value allowlist {allowlist} is missing")
+    assert_true("ApprovedValue" in source and "CopyApproved" in source and "kUnknownPackage" in source and "kUnknownState" in source and "kUnknownClass" in source, "nonidentifying production fallbacks are missing")
+    assert_true("CopySafe" not in source and "CopyApproved(event.packageName" in source, "arbitrary character filtering remains on the production package path")
     assert_true("SBElasticRouteDisplayContext" not in source and "selectImage" not in source, "prohibited functional/route behavior was introduced")
     assert_true("src/CAMLDiagnostic.xm" in MAKEFILE and "runs-on: macos-15" in WORKFLOW, "diagnostic build wiring is missing")
     assert_true("test \"$(uname -m)\" = arm64" in WORKFLOW, "Apple Silicon preflight is missing")
@@ -127,17 +151,44 @@ def production_contract_accepts(source: str) -> bool:
 
 source_contract(SOURCE)
 
-# Mutation-sensitive checks: deliberately weaken the production source and require the contract to reject it.
-mutant = SOURCE.replace("gOriginalButtonPackage)(self, cmd, description)", "gOriginalButtonPackage)(self, cmd, nil)", 1)
-assert_true(not production_contract_accepts(mutant), "contract did not detect mutated original argument")
-mutant = SOURCE.replace("if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);", "if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);\n    if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);", 1)
-assert_true(not production_contract_accepts(mutant), "contract did not detect duplicate original call")
-mutant = SOURCE.replace("entered = true;\n        body(context);", "body(context);\n        entered = true;", 1)
-assert_true(not production_contract_accepts(mutant), "contract did not detect observer body before guard state")
-mutant = SOURCE.replace("((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||\n                              (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') ? (char)c : '_'", "(char)c")
-assert_true(not production_contract_accepts(mutant), "contract did not detect weakened production redaction")
-mutant = SOURCE.replace(" | O_NOFOLLOW", "")
-assert_true(not production_contract_accepts(mutant), "contract did not detect weakened no-follow output open")
+# Mutation-sensitive checks: deliberately weaken each production-sensitive seam and require the contract to reject it.
+mutations = [
+    ("gOriginalButtonPackage)(self, cmd, description)", "gOriginalButtonPackage)(self, cmd, nil)", "original arguments"),
+    ("if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);", "if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);\n    if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);", "duplicate originals"),
+    ("entered = true;\n        body(context);", "body(context);\n        entered = true;", "guard ordering"),
+    ("gInDiagnosticObserver ||", "false ||", "reentrancy guard"),
+    ("gLoggingDisabled.load(std::memory_order_acquire) ||", "false ||", "failure-disabled guard"),
+    ("!gDiagnosticEnabled.load(std::memory_order_acquire) ||", "false ||", "enabled guard"),
+    ("(verboseOnly && !gDiagnosticVerbose.load(std::memory_order_acquire))", "false", "verbose guard"),
+    ("CopyApproved(event.packageName", "CopyFixedCString(event.packageName", "package allowlist"),
+    ("if (leaf) break;", "", "final component termination"),
+    ("CAMLScopedTempFile", "CAMLUnscopedTempFile", "temp RAII"),
+    ("O_NOFOLLOW", "0", "no-follow confinement"),
+    ("fstat(", "missing_descriptor_stat(", "descriptor validation"),
+    ("openat(", "missing_descriptor_open(", "descriptor opens"),
+    ("pread(", "missing_read(", "restart reads"),
+    ("write(", "missing_output(", "atomic writes"),
+    ("renameat(", "missing_rename(", "atomic rename"),
+    ("fsync(temporaryGuard.get())", "missing_file_sync(temporaryGuard.get())", "file fsync"),
+    ("fsync(directory)", "missing_directory_sync(directory)", "directory fsync"),
+    ("errno == EINTR", "errno == EIO", "EINTR retry"),
+    ("status.st_uid != geteuid()", "status.st_uid == geteuid()", "owner validation"),
+    ("(status.st_mode & 0777) != 0600", "(status.st_mode & 0777) == 0600", "event mode validation"),
+    ("kDiagnosticRetentionBytes = 1024 * 1024", "kDiagnosticRetentionBytes = 64", "retention saturation"),
+]
+for old, new, label in mutations:
+    mutant = SOURCE.replace(old, new)
+    assert_true(not production_contract_accepts(mutant), f"contract did not detect weakened {label}")
+
+for old, new, label in (
+    ("kRepeatCollapseWindowMs = 100", "kRepeatCollapseWindowMs = 0", "repeat-collapse window"),
+    ("kTupleDedupWindowMs = 1000", "kTupleDedupWindowMs = 0", "tuple-dedup window"),
+    ("TupleOrPairIsDuplicateLocked", "TupleOrPairWasDuplicateLocked", "deduplication call"),
+    ("gSessionEventCount.fetch_add", "gSessionEventCount.increment", "session count"),
+    ("gRingCount >= kRingCapacity", "gRingCount > kRingCapacity", "ring flush bound"),
+):
+    mutant = SOURCE.replace(old, new)
+    assert_true(not production_contract_accepts(mutant), f"contract did not detect weakened {label}")
 
 # ABI normalization and per-site fail-open behavior.
 def normalize_encoding(value: str) -> str:
@@ -195,21 +246,109 @@ factory_original = Original(factory_return)
 returned = guarded_invoke(lambda *_: (_ for _ in ()).throw(RuntimeError("diagnostic exception")), factory_original, *args)
 assert_true(returned is factory_return and factory_original.calls == [args], "diagnostic exception altered factory return or original call")
 
-# Adversarial production whitelist fixture: the exact whitelist required by CopySafe rejects paths, XML, PII, and pointers.
-def production_whitelist(value: str, capacity: int) -> str:
-    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
-    return "".join(char if char in allowed else "_" for char in value[: capacity - 1])
+# Production-boundary allowlist fixture: derive the exact approved values from production and
+# verify short identifiers, pointer-looking values, paths, and XML/content fragments fall back.
+def allowlist_values(name: str) -> set[str]:
+    match = re.search(rf"{name}\[\] = \{{(.*?)\}};", SOURCE, re.S)
+    if match is None:
+        fail(f"production allowlist {name} is not parseable")
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
 
 
-adversarial = "/private/var/mobile/Documents/<contents user=Steph token=abc> Assets.car 0xdeadbeef"
-redacted = production_whitelist(adversarial, 64)
-assert_true("/" not in redacted and "<" not in redacted and " " not in redacted and "0xdeadbeef" not in redacted, "adversarial production-boundary redaction leaked prohibited data")
+approved_packages = allowlist_values("kApprovedPackages")
+approved_states = allowlist_values("kApprovedStates")
+approved_classes = allowlist_values("kApprovedClasses")
+
+
+def production_approved(value: str | None, approved: set[str], fallback: str) -> str:
+    return value if value in approved else fallback
+
+
+assert_true(production_approved("Camera", approved_packages, "unknown") == "Camera", "approved package control was rejected")
+assert_true(production_approved("default", approved_states, "unknown-state") == "default", "approved state control was rejected")
+for adversarial in ("Steph", "0xdeadbeef", "/private/var/mobile/Documents/Camera", "<state user=Steph>", "Assets.car"):
+    assert_true(production_approved(adversarial, approved_packages, "unknown") == "unknown", f"package adversary survived allowlist: {adversarial}")
+    assert_true(production_approved(adversarial, approved_states, "unknown-state") == "unknown-state", f"state adversary survived allowlist: {adversarial}")
+    assert_true(production_approved(adversarial, approved_classes, "unknown-class") == "unknown-class", f"class adversary survived allowlist: {adversarial}")
+
+# Behavioral ring/dedup/session fixture uses production constants and names, while source mutants above
+# ensure it cannot become a disconnected replacement for the production implementation.
+def production_constant(name: str) -> int:
+    match = re.search(rf"{name} = ([0-9]+)", SOURCE)
+    if match is None:
+        fail(f"missing production constant {name}")
+    return int(match.group(1))
+
+
+class RingFixture:
+    def __init__(self) -> None:
+        self.capacity = production_constant("kRingCapacity")
+        self.session_cap = production_constant("kSessionEventCap")
+        self.collapse_ms = production_constant("kRepeatCollapseWindowMs")
+        self.dedup_ms = production_constant("kTupleDedupWindowMs")
+        self.events: list[dict[str, Any]] = []
+        self.session_count = 0
+        self.flushes = 0
+        self.last: tuple[str, str, str] | None = None
+        self.last_at = -1
+
+    def record(self, site: str, package: str, state: str, now: int) -> None:
+        if self.session_count >= self.session_cap:
+            return
+        key = (site, package, state)
+        if self.last == key and 0 <= now - self.last_at <= self.dedup_ms:
+            if now - self.last_at <= self.collapse_ms and self.events:
+                self.events[-1]["repeat"] += 1
+            self.last_at = now
+            return
+        self.last = key
+        self.last_at = now
+        self.events.append({"site": site, "package": package, "state": state, "repeat": 1})
+        self.session_count += 1
+        if len(self.events) >= self.capacity:
+            self.events.clear()
+            self.flushes += 1
+
+
+ring = RingFixture()
+ring.record("button-package", "Camera", "default", 0)
+ring.record("button-package", "Camera", "default", ring.collapse_ms)
+assert_true(ring.session_count == 1 and ring.events[-1]["repeat"] == 2, "repeat collapse changed production dedup behavior")
+ring.record("button-package", "Camera", "default", ring.collapse_ms + 1)
+assert_true(ring.session_count == 1 and len(ring.events) == 1, "tuple dedup window changed production behavior")
+for index in range(ring.capacity - 1):
+    ring.record("site", f"Package{index}", "default", 2000 + index)
+assert_true(ring.flushes == 1 and len(ring.events) == 0, "ring capacity did not flush at the production bound")
+for index in range(ring.session_cap + ring.capacity):
+    ring.record("site", f"Unique{index}", "default", 5000 + index)
+assert_true(ring.session_count == ring.session_cap, "session event cap was not enforced")
+
+def walker_components(path: str) -> list[str]:
+    components: list[str] = []
+    cursor = 0
+    while cursor < len(path):
+        while cursor < len(path) and path[cursor] == "/":
+            cursor += 1
+        if cursor == len(path):
+            break
+        start = cursor
+        while cursor < len(path) and path[cursor] != "/":
+            cursor += 1
+        components.append(path[start:cursor])
+    return components
+
+
+for candidate in ("/var/mobile/CAML-Diagnostic", "/var//mobile///CAML-Diagnostic/", "///var/mobile/CAML-Diagnostic///"):
+    assert_true(walker_components(candidate) == ["var", "mobile", "CAML-Diagnostic"], f"component traversal case was not normalized: {candidate}")
 
 # Actual descriptor-based filesystem fault tests. These use openat/O_NOFOLLOW/fstat/renameat/fsync,
 # the same primitives required by the production implementation, rather than a string-only model.
 O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+O_CREAT = getattr(os, "O_CREAT", 0)
+O_TRUNC = getattr(os, "O_TRUNC", 0)
+O_EXCL = getattr(os, "O_EXCL", 0)
 
 
 def validate_dir(fd: int, leaf: bool) -> None:
@@ -290,6 +429,87 @@ def atomic_events(directory: int, events: list[bytes], fail_after: int | None = 
         raise
 
 
+def fault_atomic_events(directory: int, events: list[bytes], fault: str | None = None,
+                        fail_after: int | None = None, eintr_once: bool = False) -> None:
+    def trip(point: str) -> None:
+        if fault == point:
+            raise OSError(f"injected {point} failure")
+
+    old = b""
+    trip("event-open")
+    try:
+        existing = os.open("events.jsonl", os.O_RDONLY | O_CLOEXEC | O_NOFOLLOW, dir_fd=directory)
+    except FileNotFoundError:
+        existing = -1
+    if existing >= 0:
+        trip("event-validate")
+        size = validate_file(existing)
+        trip("event-read")
+        old = os.read(existing, size)
+        trip("event-close")
+        os.close(existing)
+        old = old[: old.rfind(b"\n") + 1] if b"\n" in old else b""
+    payload = b"".join(events)
+    keep = max(0, 1024 * 1024 - len(payload))
+    if len(old) > keep:
+        start = old.find(b"\n", len(old) - keep)
+        old = old[start + 1 :] if start >= 0 else b""
+
+    temporary = -1
+    temporary_owned = False
+    try:
+        trip("temp-open")
+        try:
+            temporary = os.open("events.jsonl.tmp", os.O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600, dir_fd=directory)
+        except FileExistsError:
+            stale = os.open("events.jsonl.tmp", os.O_RDONLY | O_CLOEXEC | O_NOFOLLOW, dir_fd=directory)
+            validate_file(stale)
+            os.close(stale)
+            os.unlink("events.jsonl.tmp", dir_fd=directory)
+            temporary = os.open("events.jsonl.tmp", os.O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600, dir_fd=directory)
+        temporary_owned = True
+        validate_file(temporary)
+        written = 0
+        interrupted = eintr_once
+        for chunk in (old, payload):
+            cursor = 0
+            while cursor < len(chunk):
+                if fail_after is not None and written >= fail_after:
+                    raise OSError("injected interrupted write")
+                piece = chunk[cursor:]
+                if fail_after is not None:
+                    piece = piece[: max(1, fail_after - written)]
+                try:
+                    if interrupted:
+                        interrupted = False
+                        raise InterruptedError("injected EINTR")
+                    count = os.write(temporary, piece)
+                except InterruptedError:
+                    continue
+                if count <= 0:
+                    raise OSError("short write")
+                cursor += count
+                written += count
+        trip("file-fsync")
+        trip("temp-close")
+        os.close(temporary)
+        temporary = -1
+        trip("rename")
+        os.rename("events.jsonl.tmp", "events.jsonl", src_dir_fd=directory, dst_dir_fd=directory)
+        temporary_owned = False
+        trip("directory-fsync")
+        os.fsync(directory)
+    except Exception:
+        if temporary >= 0:
+            os.close(temporary)
+        if temporary_owned:
+            try:
+                os.unlink("events.jsonl.tmp", dir_fd=directory)
+            except FileNotFoundError:
+                pass
+        raise
+
+
 def read_events(directory: int) -> bytes:
     fd = os.open("events.jsonl", os.O_RDONLY | O_CLOEXEC | O_NOFOLLOW, dir_fd=directory)
     size = validate_file(fd)
@@ -298,6 +518,28 @@ def read_events(directory: int) -> bytes:
     for line in data.splitlines():
         json.loads(line)
     return data
+
+
+def assert_file_fault(directory: int, fault: str) -> None:
+    before = read_events(directory)
+    try:
+        fault_atomic_events(directory, [b'{"v":1,"q":1}\n'], fault=fault)
+    except OSError:
+        pass
+    else:
+        fail(f"injected {fault} failure unexpectedly succeeded")
+    after = read_events(directory)
+
+    if fault == "directory-fsync":
+        assert_true(after.endswith(b'{"v":1,"q":1}\n'), "post-rename directory-fsync failure lost the complete committed output")
+    else:
+        assert_true(after == before, f"{fault} failure damaged the last committed output")
+    try:
+        os.stat("events.jsonl.tmp", dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        fail(f"{fault} left an orphaned temp file")
 
 
 with tempfile.TemporaryDirectory(prefix="caml-fs-contract-") as temporary_root:
@@ -373,4 +615,64 @@ with tempfile.TemporaryDirectory(prefix="caml-fs-fault-") as temporary_root:
     os.close(directory)
     os.close(parent)
 
-print("PASS: deterministic descriptors, truthful install status, pre-gate observer isolation, mutation-sensitive pass-through/redaction, confined atomic filesystem faults, and no-device workflow checks")
+with tempfile.TemporaryDirectory(prefix="caml-fs-matrix-") as temporary_root:
+    parent = os.open(temporary_root, os.O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    directory = open_leaf(parent, "diagnostic")
+    atomic_events(directory, [b'{"v":1,"q":0}\n'])
+    for fault in ("event-open", "event-validate", "event-read", "event-close", "temp-open", "file-fsync", "temp-close", "rename", "directory-fsync"):
+        assert_file_fault(directory, fault)
+    before_eintr = read_events(directory)
+    fault_atomic_events(directory, [b'{"v":1,"q":1}\n'], eintr_once=True)
+    after_eintr = read_events(directory)
+    assert_true(after_eintr.endswith(b'{"v":1,"q":1}\n') and after_eintr.startswith(before_eintr), "EINTR retry did not preserve and commit complete records")
+
+    stale = os.open("events.jsonl.tmp", os.O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0o600, dir_fd=directory)
+    os.write(stale, b"stale\n")
+    os.close(stale)
+    fault_atomic_events(directory, [b'{"v":1,"q":2}\n'])
+    assert_true(read_events(directory).endswith(b'{"v":1,"q":2}\n'), "validated stale temp was not recovered")
+    os.symlink("/tmp", "events.jsonl.tmp", dir_fd=directory)
+    try:
+        try:
+            fault_atomic_events(directory, [b'{"v":1,"q":3}\n'])
+        except OSError:
+            pass
+        else:
+            fail("unsafe stale temp symlink was accepted")
+        os.stat("events.jsonl.tmp", dir_fd=directory, follow_symlinks=False)
+    finally:
+        os.unlink("events.jsonl.tmp", dir_fd=directory)
+
+    fd = os.open("events.jsonl", os.O_WRONLY | O_CLOEXEC | O_NOFOLLOW, dir_fd=directory)
+    os.ftruncate(fd, 0)
+    os.write(fd, b'{"v":1,"q":0}\npartial')
+    os.close(fd)
+    fault_atomic_events(directory, [b'{"v":1,"q":4}\n'])
+    recovered = read_events(directory)
+    assert_true(b"partial" not in recovered and recovered.endswith(b'{"v":1,"q":4}\n'), "incomplete tail was not removed on restart")
+
+    fd = os.open("events.jsonl", os.O_WRONLY | O_CLOEXEC | O_NOFOLLOW, dir_fd=directory)
+    os.fchmod(fd, 0o644)
+    os.close(fd)
+    try:
+        read_events(directory)
+    except SystemExit:
+        pass
+    else:
+        fail("permissive event mode was accepted")
+    fd = os.open("events.jsonl", os.O_WRONLY | O_CLOEXEC | O_NOFOLLOW, dir_fd=directory)
+    os.fchmod(fd, 0o600)
+    os.close(fd)
+
+    line = b'{"v":1,"q":5}\n'
+    old = line * ((1024 * 1024 // len(line)) - 1)
+    fd = os.open("events.jsonl", os.O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0o600, dir_fd=directory)
+    os.write(fd, old)
+    os.close(fd)
+    fault_atomic_events(directory, [b'{"v":1,"q":6}\n'])
+    saturated = read_events(directory)
+    assert_true(len(saturated) <= 1024 * 1024 and saturated.endswith(b'{"v":1,"q":6}\n') and all(line.endswith(b"\n") for line in saturated.splitlines(keepends=True)), "retention saturation did not evict complete oldest records")
+    os.close(directory)
+    os.close(parent)
+
+print("PASS: deterministic descriptors, truthful install status, guarded pass-through/ARC boundary, allowlist redaction, mutation-sensitive runtime/filesystem matrix, ring/dedup/session bounds, and no-device workflow checks")
