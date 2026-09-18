@@ -127,6 +127,8 @@ def source_contract(source: str) -> None:
     install = function_body(source, "InstallSite")
     for operation in ("objc_getClass", "sel_registerName", "class_getClassMethod", "class_getInstanceMethod", "method_getTypeEncoding", "ABIShapeMatches", "MSHookMessageEx", "*site->original != NULL"):
         assert_true(operation in install, f"runtime installation behavior omits {operation}")
+    for guard in ("if (!target) return false;", "if (!method) return false;", "const char *runtimeEncoding = method_getTypeEncoding(method);", "if (!ABIShapeMatches(runtimeEncoding, site->encoding)) return false;"):
+        assert_true(guard in install, f"runtime installation fail-open guard omits {guard}")
     assert_true("NSFileHandle" not in source and "fileExistsAtPath" not in source and "chmod(path.fileSystemRepresentation" not in source, "path-based output API remains in the diagnostic")
     for allowlist in ("kApprovedPackages", "kApprovedStates", "kApprovedClasses"):
         assert_true(allowlist in source, f"approved-value allowlist {allowlist} is missing")
@@ -171,6 +173,9 @@ mutations = [
     ("renameat(", "missing_rename(", "atomic rename"),
     ("fsync(temporaryGuard.get())", "missing_file_sync(temporaryGuard.get())", "file fsync"),
     ("fsync(directory)", "missing_directory_sync(directory)", "directory fsync"),
+    ("mkdirat(", "make_directory(", "directory creation"),
+    ("unlinkat(", "remove_path(", "temp cleanup"),
+    ("close(", "finish_descriptor(", "descriptor close"),
     ("errno == EINTR", "errno == EIO", "EINTR retry"),
     ("status.st_uid != geteuid()", "status.st_uid == geteuid()", "owner validation"),
     ("(status.st_mode & 0777) != 0600", "(status.st_mode & 0777) == 0600", "event mode validation"),
@@ -189,6 +194,25 @@ for old, new, label in (
 ):
     mutant = SOURCE.replace(old, new)
     assert_true(not production_contract_accepts(mutant), f"contract did not detect weakened {label}")
+
+for name, original_call, mutated_call in (
+    ("CAMLButtonPackageHook", "gOriginalButtonPackage)(self, cmd, description)", "gOriginalButtonPackage)(self, cmd, nil)"),
+    ("CAMLRoundPackageHook", "gOriginalRoundPackage)(self, cmd, description)", "gOriginalRoundPackage)(self, cmd, nil)"),
+    ("CAMLSliderPackageHook", "gOriginalSliderPackage)(self, cmd, description)", "gOriginalSliderPackage)(self, cmd, nil)"),
+    ("CAMLFactoryHook", "gOriginalFactory)(self, cmd, packageName, bundle)", "gOriginalFactory)(self, cmd, nil, bundle)"),
+    ("CAMLButtonStateHook", "gOriginalButtonState)(self, cmd, state)", "gOriginalButtonState)(self, cmd, nil)"),
+    ("CAMLSliderStateHook", "gOriginalSliderState)(self, cmd, state)", "gOriginalSliderState)(self, cmd, nil)"),
+):
+    mutant = SOURCE.replace(original_call, mutated_call, 1)
+    assert_true(not production_contract_accepts(mutant), f"contract did not detect mutated arguments for {name}")
+
+for guard, mutation in (
+    ("if (!target) return false;", "if (false) return false;"),
+    ("if (!method) return false;", "if (false) return false;"),
+    ("if (!ABIShapeMatches(runtimeEncoding, site->encoding)) return false;", "if (false) return false;"),
+):
+    mutant = SOURCE.replace(guard, mutation, 1)
+    assert_true(not production_contract_accepts(mutant), f"contract did not detect weakened install guard {guard}")
 
 # ABI normalization and per-site fail-open behavior.
 def normalize_encoding(value: str) -> str:
