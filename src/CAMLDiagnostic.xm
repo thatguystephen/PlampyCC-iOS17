@@ -20,6 +20,8 @@
 #include <atomic>
 #include <stdio.h>
 #include <string.h>
+#include "CAMLDiagnosticCore.hpp"
+#include "CAMLDiagnosticIO.hpp"
 
 static const char kDiagnosticPrefsDomain[] = "com.misakaproject.plampyCC";
 static CFStringRef const kDiagnosticPrefsChanged = CFSTR("com.misakaproject.plampyCC.settingsChanged");
@@ -28,14 +30,13 @@ static const char kDiagnosticVerboseKey[] = "kDiagnosticVerbose";
 static const char kDiagnosticBuildId[] = "plampycc-caml-observer-v1";
 static const char kDiagnosticEventFile[] = "events.jsonl";
 static const char kDiagnosticTempFile[] = "events.jsonl.tmp";
+
+extern caml_diag::SyscallAdapter gDarwinSyscalls;
 static constexpr size_t kDiagnosticSiteCount = 6;
-static constexpr size_t kRingCapacity = 512;
-static constexpr size_t kSerializedEventCapacity = 256;
+static constexpr size_t kRingCapacity = caml_diag::RingPolicy::kCapacity;
+static constexpr size_t kSerializedEventCapacity = caml_diag::RingPolicy::kSerializedEventCapacity;
 static constexpr size_t kDiagnosticPathCapacity = PATH_MAX;
 static constexpr size_t kDiagnosticRetentionBytes = 1024 * 1024;
-static constexpr uint64_t kRepeatCollapseWindowMs = 100;
-static constexpr uint64_t kTupleDedupWindowMs = 1000;
-static constexpr uint64_t kSessionEventCap = 2000;
 
 static std::atomic<bool> gDiagnosticEnabled(false);
 static std::atomic<bool> gDiagnosticVerbose(false);
@@ -82,21 +83,25 @@ static CAMLDiagnosticEvent gRing[kRingCapacity];
 static uint32_t gRingCount = 0;
 static CAMLSeenDescription gSeenDescriptions[128] = {};
 static uint32_t gSeenDescriptionCount = 0;
-static char gLastTuple[128] = {};
-static char gLastPair[96] = {};
-static uint64_t gLastTupleMs = 0;
-static uint64_t gLastPairMs = 0;
+static caml_diag::RingPolicy gRingPolicy;
+static caml_diag::DedupPolicy gDedupPolicy;
 static uint32_t gLastRingIndex = 0;
 static unsigned char gRetentionBuffer[kDiagnosticRetentionBytes];
 
 static bool SerializeEvent(CAMLDiagnosticEvent *event);
 
-static IMP gOriginalButtonPackage = NULL;
-static IMP gOriginalRoundPackage = NULL;
-static IMP gOriginalSliderPackage = NULL;
-static IMP gOriginalFactory = NULL;
-static IMP gOriginalButtonState = NULL;
-static IMP gOriginalSliderState = NULL;
+extern IMP gOriginalButtonPackage;
+extern IMP gOriginalRoundPackage;
+extern IMP gOriginalSliderPackage;
+extern IMP gOriginalFactory;
+extern IMP gOriginalButtonState;
+extern IMP gOriginalSliderState;
+extern void CAMLButtonPackageHook(id, SEL, id);
+extern void CAMLRoundPackageHook(id, SEL, id);
+extern void CAMLSliderPackageHook(id, SEL, id);
+extern id CAMLFactoryHook(id, SEL, id, id);
+extern void CAMLButtonStateHook(id, SEL, id);
+extern void CAMLSliderStateHook(id, SEL, id);
 
 static uint64_t DiagnosticMonotonicMilliseconds(void) {
     static mach_timebase_info_data_t timebase = {};
@@ -105,48 +110,21 @@ static uint64_t DiagnosticMonotonicMilliseconds(void) {
     return nanos / 1000000ULL;
 }
 
-static const char * const kUnknownPackage = "unknown";
-static const char * const kUnknownState = "unknown-state";
-static const char * const kUnknownClass = "unknown-class";
-static const char * const kApprovedPackages[] = {
-    "AirplaneMode", "Bluetooth", "Calculator", "Camera", "Flashlight", "Focus",
-    "LowPower", "MusicRecognition", "Timer", "WiFi"
-};
-static const char * const kApprovedStates[] = {
-    "default", "disabled", "expanded", "highlighted", "collapsed", "off", "on", "selected"
-};
-static const char * const kApprovedClasses[] = {
-    "CCUIButtonModuleView", "CCUIButtonModuleViewController", "CCUIRoundButton",
-    "CCUILabeledRoundButton", "CCUILabeledRoundButtonController", "CCUIBaseSliderView",
-    "CCUICAPackageDescription", "CCUICAPackageView", "CCUIToggleModule", "CCUIAppearanceModule",
-    "CCUIMuteModule", "CCUIOrientationLockModule", "CCUILowPowerModuleViewController"
-};
-
+static const char * const kUnknownPackage = caml_diag::kUnknownPackage;
+static const char * const kUnknownState = caml_diag::kUnknownState;
+static const char * const kUnknownClass = caml_diag::kUnknownClass;
 static void CopyFixedCString(char *destination, size_t capacity, const char *value) {
     if (capacity == 0) return;
     destination[0] = '\0';
     if (value) snprintf(destination, capacity, "%s", value);
 }
 
-static bool ApprovedValue(NSString *value, const char * const *allowlist, size_t count, const char **approved) {
-    if (approved) *approved = nullptr;
-    if (!value) return false;
-    for (size_t i = 0; i < count; ++i) {
-        NSString *candidate = [NSString stringWithUTF8String:allowlist[i]];
-        if ([value isEqualToString:candidate]) {
-            if (approved) *approved = allowlist[i];
-            return true;
-        }
-    }
-    return false;
-}
-
 static void CopyApproved(char *destination, size_t capacity, NSString *value,
-                         const char * const *allowlist, size_t count, const char *fallback) {
+                         caml_diag::ValueKind kind) {
     if (capacity == 0) return;
-    const char *approved = nullptr;
-    CopyFixedCString(destination, capacity,
-                     ApprovedValue(value, allowlist, count, &approved) ? approved : fallback);
+    const char *utf8 = value ? [value UTF8String] : nullptr;
+    const char *approved = caml_diag::ApprovedValue(utf8 ? std::string_view(utf8) : std::string_view(), kind);
+    CopyFixedCString(destination, capacity, approved);
 }
 
 // Runtime encodings may quote class annotations. The ABI shape is authoritative.
@@ -206,7 +184,7 @@ public:
     }
     bool Close() {
         if (descriptor_ < 0) return true;
-        int result = close(descriptor_);
+        int result = gDarwinSyscalls.close(gDarwinSyscalls.context, descriptor_);
         descriptor_ = -1;
         return result == 0;
     }
@@ -227,15 +205,16 @@ public:
     CAMLScopedTempFile(const CAMLScopedTempFile &) = delete;
     CAMLScopedTempFile &operator=(const CAMLScopedTempFile &) = delete;
     ~CAMLScopedTempFile() {
-        if (descriptor_ >= 0) close(descriptor_);
-        if (!committed_ && directory_ >= 0) unlinkat(directory_, name_, 0);
+        if (descriptor_ >= 0) gDarwinSyscalls.close(gDarwinSyscalls.context, descriptor_);
+        if (!committed_ && directory_ >= 0)
+            gDarwinSyscalls.unlinkAt(gDarwinSyscalls.context, directory_, name_);
     }
 
     bool Valid() const { return descriptor_ >= 0; }
     int get() const { return descriptor_; }
     bool Close() {
         if (descriptor_ < 0) return true;
-        int result = close(descriptor_);
+        int result = gDarwinSyscalls.close(gDarwinSyscalls.context, descriptor_);
         descriptor_ = -1;
         return result == 0;
     }
@@ -254,7 +233,8 @@ static NSString *DiagnosticOutputDirectory(void) {
 
 static bool ValidateDirectoryFD(int descriptor, bool leaf) {
     struct stat status = {};
-    if (fstat(descriptor, &status) != 0 || !S_ISDIR(status.st_mode)) return false;
+    if (gDarwinSyscalls.stat(gDarwinSyscalls.context, descriptor, &status) != 0 ||
+        !S_ISDIR(status.st_mode)) return false;
     if (leaf && status.st_uid != geteuid()) return false;
     if (leaf) return (status.st_mode & 0777) == 0700;
     return (status.st_mode & 0022) == 0;
@@ -262,7 +242,8 @@ static bool ValidateDirectoryFD(int descriptor, bool leaf) {
 
 static bool ValidateEventFD(int descriptor, size_t *size) {
     struct stat status = {};
-    if (fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode)) return false;
+    if (gDarwinSyscalls.stat(gDarwinSyscalls.context, descriptor, &status) != 0 ||
+        !S_ISREG(status.st_mode)) return false;
     if (status.st_uid != geteuid() || (status.st_mode & 0777) != 0600) return false;
     if (status.st_size < 0 || (uint64_t)status.st_size > kDiagnosticRetentionBytes) return false;
     if (size) *size = (size_t)status.st_size;
@@ -278,8 +259,12 @@ static bool OpenDiagnosticDirectory(int *descriptor) {
         if (!source) return false;
         char path[kDiagnosticPathCapacity] = {};
         if (strlcpy(path, source, sizeof(path)) >= sizeof(path)) return false;
+        caml_diag::PathComponents parsedPath;
+        if (!caml_diag::ParsePathComponents(path, &parsedPath)) return false;
+        (void)parsedPath;
 
-        CAMLScopedFD current(open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+        CAMLScopedFD current(gDarwinSyscalls.openAt(gDarwinSyscalls.context, AT_FDCWD, "/",
+                                                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW, 0));
         if (!current.Valid() || !ValidateDirectoryFD(current.get(), false)) return false;
         char *cursor = path;
         bool sawComponent = false;
@@ -296,12 +281,15 @@ static bool OpenDiagnosticDirectory(int *descriptor) {
             bool leaf = *cursor == '\0';
             if (component[0] == '\0' || strcmp(component, ".") == 0 || strcmp(component, "..") == 0)
                 return false;
-            CAMLScopedFD next(openat(current.get(), component,
-                                     O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+            CAMLScopedFD next(gDarwinSyscalls.openAt(
+                gDarwinSyscalls.context, current.get(), component,
+                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW, 0));
             if (!next.Valid() && errno == ENOENT) {
-                if (mkdirat(current.get(), component, 0700) != 0 && errno != EEXIST) return false;
-                next.Reset(openat(current.get(), component,
-                                  O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+                if (gDarwinSyscalls.makeDirectoryAt(gDarwinSyscalls.context, current.get(), component, 0700) != 0 &&
+                    errno != EEXIST) return false;
+                next.Reset(gDarwinSyscalls.openAt(
+                    gDarwinSyscalls.context, current.get(), component,
+                    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW, 0));
             }
             if (!next.Valid() || !ValidateDirectoryFD(next.get(), leaf)) return false;
             if (!current.Reset(next.Release())) return false;
@@ -319,54 +307,79 @@ static bool OpenDiagnosticDirectory(int *descriptor) {
 static bool ReadExistingEvents(int directory, size_t *size) {
     if (!size) return false;
     *size = 0;
-    CAMLScopedFD descriptor(openat(directory, kDiagnosticEventFile, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+    CAMLScopedFD descriptor(gDarwinSyscalls.openAt(
+        gDarwinSyscalls.context, directory, kDiagnosticEventFile,
+        O_RDONLY | O_CLOEXEC | O_NOFOLLOW, 0));
     if (!descriptor.Valid()) return errno == ENOENT;
     size_t length = 0;
     if (!ValidateEventFD(descriptor.get(), &length)) return false;
-    size_t offset = 0;
-    while (offset < length) {
-        ssize_t count = pread(descriptor.get(), gRetentionBuffer + offset, length - offset, (off_t)offset);
-        if (count < 0 && errno == EINTR) continue;
-        if (count <= 0) return false;
-        offset += (size_t)count;
-    }
+    if (!caml_diag::ReadAtExact(gDarwinSyscalls, descriptor.get(), gRetentionBuffer,
+                                length, 0)) return false;
     if (!descriptor.Close()) return false;
     *size = length;
     return true;
 }
 
 static size_t CompleteLinePrefix(size_t size) {
-    while (size > 0 && gRetentionBuffer[size - 1] != '\n') --size;
-    return size;
+    return caml_diag::CompleteLinePrefix((const char *)gRetentionBuffer, size);
 }
 
-static bool WriteAll(int descriptor, const void *bytes, size_t length) {
-    const unsigned char *cursor = (const unsigned char *)bytes;
-    while (length > 0) {
-        ssize_t count = write(descriptor, cursor, length);
-        if (count < 0 && errno == EINTR) continue;
-        if (count <= 0) return false;
-        cursor += count;
-        length -= (size_t)count;
+static int DarwinOpenAt(void *, int directory, const char *name, int flags, mode_t mode) {
+    return openat(directory, name, flags, mode);
+}
+static int DarwinMakeDirectoryAt(void *, int directory, const char *name, mode_t mode) {
+    return mkdirat(directory, name, mode);
+}
+static int DarwinStat(void *, int descriptor, struct stat *status) {
+    return fstat(descriptor, status);
+}
+static ssize_t DarwinReadAt(void *, int descriptor, void *bytes, size_t length, off_t offset) {
+    for (;;) {
+        ssize_t result = pread(descriptor, bytes, length, offset);
+        if (result < 0 && errno == EINTR) continue;
+        return result;
     }
-    return true;
+}
+static ssize_t DarwinWrite(void *, int descriptor, const void *bytes, size_t length) {
+    for (;;) {
+        ssize_t result = write(descriptor, bytes, length);
+        if (result < 0 && errno == EINTR) continue;
+        return result;
+    }
+}
+static int DarwinSync(void *, int descriptor) { return fsync(descriptor); }
+static int DarwinRenameAt(void *, int fromDirectory, const char *from, int toDirectory, const char *to) {
+    return renameat(fromDirectory, from, toDirectory, to);
+}
+static int DarwinUnlinkAt(void *, int directory, const char *name) { return unlinkat(directory, name, 0); }
+static int DarwinClose(void *, int descriptor) { return close(descriptor); }
+caml_diag::SyscallAdapter gDarwinSyscalls = {
+    nullptr,
+    DarwinOpenAt, DarwinMakeDirectoryAt, DarwinStat,
+    DarwinReadAt, DarwinWrite, DarwinSync,
+    DarwinRenameAt, DarwinUnlinkAt, DarwinClose
+};
+
+static bool WriteAll(int descriptor, const void *bytes, size_t length) {
+    return caml_diag::WriteAll(gDarwinSyscalls, descriptor, bytes, length);
 }
 
 static int OpenTemporaryEvents(int directory) {
     for (int attempt = 0; attempt < 2; ++attempt) {
-        CAMLScopedFD descriptor(openat(directory, kDiagnosticTempFile,
-                                       O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
+        CAMLScopedFD descriptor(gDarwinSyscalls.openAt(gDarwinSyscalls.context, directory, kDiagnosticTempFile,
+                                                   O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
         if (descriptor.Valid()) {
             size_t size = 0;
             if (ValidateEventFD(descriptor.get(), &size) && size == 0) return descriptor.Release();
-            unlinkat(directory, kDiagnosticTempFile, 0);
+            gDarwinSyscalls.unlinkAt(gDarwinSyscalls.context, directory, kDiagnosticTempFile);
             return -1;
         }
         if (errno != EEXIST || attempt != 0) return -1;
-        CAMLScopedFD stale(openat(directory, kDiagnosticTempFile, O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+        CAMLScopedFD stale(gDarwinSyscalls.openAt(gDarwinSyscalls.context, directory, kDiagnosticTempFile,
+                                             O_RDONLY | O_CLOEXEC | O_NOFOLLOW, 0));
         if (!stale.Valid()) return -1;
         if (!ValidateEventFD(stale.get(), nullptr) || !stale.Close() ||
-            unlinkat(directory, kDiagnosticTempFile, 0) != 0) return -1;
+            gDarwinSyscalls.unlinkAt(gDarwinSyscalls.context, directory, kDiagnosticTempFile) != 0) return -1;
     }
     return -1;
 }
@@ -387,10 +400,14 @@ static bool FlushRingLocked(void) {
     int directory = -1;
     bool succeeded = false;
     @try {
+        caml_diag::AtomicOutputState ioState;
+        if (!ioState.Apply(caml_diag::AtomicOperation::Open)) return false;
         if (!OpenDiagnosticDirectory(&directory)) return false;
         CAMLScopedFD directoryGuard(directory);
         size_t existingSize = 0;
-        if (!ReadExistingEvents(directory, &existingSize)) return false;
+        if (!ioState.Apply(caml_diag::AtomicOperation::Validate) ||
+            !ReadExistingEvents(directory, &existingSize)) return false;
+        if (!ioState.Apply(caml_diag::AtomicOperation::Read)) return false;
         existingSize = CompleteLinePrefix(existingSize);
         size_t pendingSize = PendingEventBytes();
         if (pendingSize == 0 || pendingSize > kDiagnosticRetentionBytes) return false;
@@ -402,16 +419,22 @@ static bool FlushRingLocked(void) {
         int temporaryDescriptor = OpenTemporaryEvents(directory);
         if (temporaryDescriptor < 0) return false;
         CAMLScopedTempFile temporaryGuard(directory, kDiagnosticTempFile, temporaryDescriptor);
-        if (!temporaryGuard.Valid()) return false;
+        if (!temporaryGuard.Valid() || !ioState.Apply(caml_diag::AtomicOperation::TempAcquire)) return false;
         if (!WriteAll(temporaryGuard.get(), gRetentionBuffer + firstExisting, existingSize - firstExisting)) return false;
         for (uint32_t i = 0; i < gRingCount; ++i) {
             size_t length = strlen(gRing[i].serialized);
             if (!WriteAll(temporaryGuard.get(), gRing[i].serialized, length)) return false;
         }
-        if (fsync(temporaryGuard.get()) != 0 || !temporaryGuard.Close()) return false;
-        if (renameat(directory, kDiagnosticTempFile, directory, kDiagnosticEventFile) != 0) return false;
+        if (!ioState.Apply(caml_diag::AtomicOperation::Write) ||
+            gDarwinSyscalls.sync(gDarwinSyscalls.context, temporaryGuard.get()) != 0 ||
+            !ioState.Apply(caml_diag::AtomicOperation::FileSync) || !temporaryGuard.Close() ||
+            !ioState.Apply(caml_diag::AtomicOperation::Close)) return false;
+        if (gDarwinSyscalls.renameAt(gDarwinSyscalls.context, directory, kDiagnosticTempFile,
+                                     directory, kDiagnosticEventFile) != 0 ||
+            !ioState.Apply(caml_diag::AtomicOperation::Rename)) return false;
         temporaryGuard.Commit();
-        if (fsync(directory) != 0) return false;
+        if (gDarwinSyscalls.sync(gDarwinSyscalls.context, directory) != 0 ||
+            !ioState.Apply(caml_diag::AtomicOperation::DirectorySync)) return false;
         if (!directoryGuard.Close()) return false;
         gRingCount = 0;
         succeeded = true;
@@ -425,10 +448,17 @@ static void DisableLoggingForSession(void) {
     gLoggingDisabled.store(true, std::memory_order_release);
 }
 
+extern "C" bool CAMLDiagnosticPrimitiveAdmission(bool verboseOnly) {
+    // This is the only pre-observer hook decision. It reads POD state only:
+    // no message send, retain, allocation, logging, or filesystem operation.
+    return !gInDiagnosticObserver &&
+           !gLoggingDisabled.load(std::memory_order_acquire) &&
+           gDiagnosticEnabled.load(std::memory_order_acquire) &&
+           (!verboseOnly || gDiagnosticVerbose.load(std::memory_order_acquire));
+}
+
 static bool BeginObserver(bool verboseOnly) {
-    if (gInDiagnosticObserver || gLoggingDisabled.load(std::memory_order_acquire) ||
-        !gDiagnosticEnabled.load(std::memory_order_acquire) ||
-        (verboseOnly && !gDiagnosticVerbose.load(std::memory_order_acquire))) return false;
+    if (!CAMLDiagnosticPrimitiveAdmission(verboseOnly)) return false;
     gInDiagnosticObserver = true;
     return true;
 }
@@ -443,14 +473,14 @@ static void CopyPackageDetails(id description, char *packageName, size_t package
     packageName[0] = pathPrefix[0] = descriptionClass[0] = '\0';
     if (!description) return;
     CopyApproved(descriptionClass, classCapacity, NSStringFromClass(object_getClass(description)),
-                 kApprovedClasses, sizeof(kApprovedClasses) / sizeof(kApprovedClasses[0]), kUnknownClass);
+                 caml_diag::ValueKind::Class);
     if (![description respondsToSelector:@selector(packageURL)]) return;
     id packageURL = ((id(*)(id, SEL))objc_msgSend)(description, @selector(packageURL));
     if (![packageURL isKindOfClass:[NSURL class]]) return;
     NSString *path = [(NSURL *)packageURL path];
     NSString *last = [path lastPathComponent];
     CopyApproved(packageName, packageCapacity, [last stringByDeletingPathExtension],
-                 kApprovedPackages, sizeof(kApprovedPackages) / sizeof(kApprovedPackages[0]), kUnknownPackage);
+                 caml_diag::ValueKind::Package);
     if ([path hasPrefix:@"/private/"]) CopyFixedCString(pathPrefix, prefixCapacity, "private");
     else if ([path hasPrefix:@"/var/"]) CopyFixedCString(pathPrefix, prefixCapacity, "var");
     else if ([path rangeOfString:@"/Containers/"].location != NSNotFound) CopyFixedCString(pathPrefix, prefixCapacity, "app-container");
@@ -462,11 +492,10 @@ static void CopyStateDetails(id state, char *destination, size_t capacity) {
     if (!state) {
         destination[0] = '\0';
     } else if ([state isKindOfClass:[NSString class]]) {
-        CopyApproved(destination, capacity, state, kApprovedStates,
-                    sizeof(kApprovedStates) / sizeof(kApprovedStates[0]), kUnknownState);
+        CopyApproved(destination, capacity, state, caml_diag::ValueKind::State);
     } else {
         CopyApproved(destination, capacity, NSStringFromClass(object_getClass(state)),
-                     kApprovedClasses, sizeof(kApprovedClasses) / sizeof(kApprovedClasses[0]), kUnknownState);
+                     caml_diag::ValueKind::Class);
     }
 }
 
@@ -482,7 +511,7 @@ static void CopyAncestorClass(id view, char *destination, size_t capacity) {
     if (![view respondsToSelector:selector]) return;
     id controller = ((id(*)(id, SEL))objc_msgSend)(view, selector);
     if (controller) CopyApproved(destination, capacity, NSStringFromClass(object_getClass(controller)),
-                                  kApprovedClasses, sizeof(kApprovedClasses) / sizeof(kApprovedClasses[0]), kUnknownClass);
+                                   caml_diag::ValueKind::Class);
 }
 
 static bool DescriptionIsNewLocked(id view, id description) {
@@ -504,36 +533,19 @@ static bool DescriptionIsNewLocked(id view, id description) {
     return true;
 }
 
+static bool SerializeEvent(CAMLDiagnosticEvent *event);
+
 static bool TupleOrPairIsDuplicateLocked(CAMLDiagnosticEvent *event, bool *serializationFailed) {
     *serializationFailed = false;
-    char tuple[128] = {};
-    char pair[96] = {};
-    snprintf(tuple, sizeof(tuple), "%s|%s|%s", event->site, event->packageName, event->state);
-    snprintf(pair, sizeof(pair), "%s|%s", event->site, event->packageName);
-    uint64_t now = event->monotonicMs;
-    if (strcmp(tuple, gLastTuple) == 0 && now >= gLastTupleMs && now - gLastTupleMs <= kTupleDedupWindowMs) {
-        if (now - gLastTupleMs <= kRepeatCollapseWindowMs && gRingCount > 0) {
-            CAMLDiagnosticEvent *previous = &gRing[gLastRingIndex];
-            if (previous->repeat < UINT32_MAX) ++previous->repeat;
-            if (!SerializeEvent(previous)) *serializationFailed = true;
-        }
-        gLastTupleMs = now;
-        return true;
-    }
-    if (strcmp(pair, gLastPair) == 0 && now >= gLastPairMs && now - gLastPairMs <= kRepeatCollapseWindowMs) {
-        if (gRingCount > 0) {
-            CAMLDiagnosticEvent *previous = &gRing[gLastRingIndex];
-            if (previous->repeat < UINT32_MAX) ++previous->repeat;
-            if (!SerializeEvent(previous)) *serializationFailed = true;
-        }
-        gLastPairMs = now;
-        return true;
-    }
-    strncpy(gLastTuple, tuple, sizeof(gLastTuple) - 1);
-    strncpy(gLastPair, pair, sizeof(gLastPair) - 1);
-    gLastTupleMs = now;
-    gLastPairMs = now;
-    return false;
+    caml_diag::DuplicateDecision decision = gDedupPolicy.Decide(
+        { event->site, event->packageName, event->state }, event->monotonicMs,
+        gRingCount != 0, nullptr);
+    if (decision == caml_diag::DuplicateDecision::Accept) return false;
+    if (gRingCount == 0) return true;
+    CAMLDiagnosticEvent *previous = &gRing[gLastRingIndex];
+    if (previous->repeat < UINT32_MAX) ++previous->repeat;
+    if (!SerializeEvent(previous)) *serializationFailed = true;
+    return true;
 }
 
 static bool SerializeEvent(CAMLDiagnosticEvent *event) {
@@ -548,7 +560,7 @@ static bool SerializeEvent(CAMLDiagnosticEvent *event) {
                            event->descriptionIsNew ? 1 : 0, event->state,
                            event->descriptionClass, event->viewTag, event->ancestorClass,
                            event->repeat, event->installationSucceeded ? 1 : 0, buildId, uuid);
-    return written > 0 && (size_t)written < sizeof(event->serialized);
+    return written > 0 && gRingPolicy.SerializedSizeFits((size_t)written);
 }
 
 static void RecordEventBody(const char *site, id view, id description, id state,
@@ -562,7 +574,7 @@ static void RecordEventBody(const char *site, id view, id description, id state,
                        sizeof(event.pathPrefix), event.descriptionClass, sizeof(event.descriptionClass));
     if ([packageNameOverride isKindOfClass:[NSString class]])
         CopyApproved(event.packageName, sizeof(event.packageName), packageNameOverride,
-                     kApprovedPackages, sizeof(kApprovedPackages) / sizeof(kApprovedPackages[0]), kUnknownPackage);
+                     caml_diag::ValueKind::Package);
     CopyStateDetails(state, event.state, sizeof(event.state));
     CopyAncestorClass(view, event.ancestorClass, sizeof(event.ancestorClass));
     event.viewTag = ViewTag(view);
@@ -570,7 +582,7 @@ static void RecordEventBody(const char *site, id view, id description, id state,
     event.installationSucceeded = installationSucceeded;
     os_unfair_lock_lock(&gDiagnosticLock);
     event.descriptionIsNew = DescriptionIsNewLocked(view, description);
-    if (gSessionEventCount.load(std::memory_order_relaxed) >= kSessionEventCap) {
+    if (!gRingPolicy.Admit(gSessionEventCount.load(std::memory_order_relaxed))) {
         os_unfair_lock_unlock(&gDiagnosticLock);
         return;
     }
@@ -581,7 +593,7 @@ static void RecordEventBody(const char *site, id view, id description, id state,
         if (serializationFailed) DisableLoggingForSession();
         return;
     }
-    if (gRingCount >= kRingCapacity && !FlushRingLocked()) {
+    if (gRingPolicy.MustFlush(gRingCount) && !FlushRingLocked()) {
         os_unfair_lock_unlock(&gDiagnosticLock);
         DisableLoggingForSession();
         return;
@@ -595,7 +607,7 @@ static void RecordEventBody(const char *site, id view, id description, id state,
     gLastRingIndex = gRingCount;
     ++gRingCount;
     gSessionEventCount.fetch_add(1, std::memory_order_relaxed);
-    bool flush = gRingCount == kRingCapacity;
+    bool flush = gRingPolicy.MustFlush(gRingCount);
     bool flushSucceeded = !flush || FlushRingLocked();
     os_unfair_lock_unlock(&gDiagnosticLock);
     if (!flushSucceeded) DisableLoggingForSession();
@@ -624,7 +636,7 @@ static void ObservePackageBody(void *rawContext) {
     CAMLPackageContext *context = (CAMLPackageContext *)rawContext;
     RecordEventBody(context->site, context->view, context->description, nil, nil, false, false);
 }
-__attribute__((noinline, used)) static void ObservePackage(__unsafe_unretained id view, __unsafe_unretained id description, const char *site) {
+extern "C" __attribute__((noinline, used)) void ObservePackage(__unsafe_unretained id view, __unsafe_unretained id description, const char *site) {
     CAMLPackageContext context = { view, description, site };
     RunObserver(false, ObservePackageBody, &context);
 }
@@ -638,7 +650,7 @@ static void ObserveStateBody(void *rawContext) {
         description = ((id(*)(id, SEL))objc_msgSend)(context->view, selector);
     RecordEventBody(context->site, context->view, description, context->state, nil, false, false);
 }
-__attribute__((noinline, used)) static void ObserveState(__unsafe_unretained id view, __unsafe_unretained id state, const char *site) {
+extern "C" __attribute__((noinline, used)) void ObserveState(__unsafe_unretained id view, __unsafe_unretained id state, const char *site) {
     CAMLStateContext context = { view, state, site };
     RunObserver(false, ObserveStateBody, &context);
 }
@@ -649,39 +661,9 @@ static void ObserveFactoryBody(void *rawContext) {
     NSString *packageName = [context->packageName isKindOfClass:[NSString class]] ? context->packageName : nil;
     RecordEventBody("factory", nil, nil, nil, packageName, false, false);
 }
-__attribute__((noinline, used)) static void ObserveFactory(__unsafe_unretained id packageName) {
+extern "C" __attribute__((noinline, used)) void ObserveFactory(__unsafe_unretained id packageName) {
     CAMLFactoryContext context = { packageName };
     RunObserver(true, ObserveFactoryBody, &context);
-}
-
-static void CAMLButtonPackageHook(id self, SEL cmd, id description) {
-    ObservePackage(self, description, "button-view");
-    if (gOriginalButtonPackage) ((void(*)(id, SEL, id))gOriginalButtonPackage)(self, cmd, description);
-}
-
-static void CAMLRoundPackageHook(id self, SEL cmd, id description) {
-    ObservePackage(self, description, "round-button");
-    if (gOriginalRoundPackage) ((void(*)(id, SEL, id))gOriginalRoundPackage)(self, cmd, description);
-}
-
-static void CAMLSliderPackageHook(id self, SEL cmd, id description) {
-    ObservePackage(self, description, "slider-view");
-    if (gOriginalSliderPackage) ((void(*)(id, SEL, id))gOriginalSliderPackage)(self, cmd, description);
-}
-
-static id CAMLFactoryHook(id self, SEL cmd, id packageName, id bundle) {
-    ObserveFactory(packageName);
-    return gOriginalFactory ? ((id(*)(id, SEL, id, id))gOriginalFactory)(self, cmd, packageName, bundle) : nil;
-}
-
-static void CAMLButtonStateHook(id self, SEL cmd, id state) {
-    ObserveState(self, state, "glyph-state");
-    if (gOriginalButtonState) ((void(*)(id, SEL, id))gOriginalButtonState)(self, cmd, state);
-}
-
-static void CAMLSliderStateHook(id self, SEL cmd, id state) {
-    ObserveState(self, state, "glyph-state");
-    if (gOriginalSliderState) ((void(*)(id, SEL, id))gOriginalSliderState)(self, cmd, state);
 }
 
 struct CAMLInstallContext { const char *site; bool succeeded; };
@@ -709,15 +691,17 @@ extern "C" void CAMLDiagnosticFlushAtDismiss(void) {
 static bool InstallSite(const CAMLDiagnosticSite *site) {
     if (!site || !site->className || !site->selectorName || !site->encoding || !site->replacement || !site->original) return false;
     Class target = objc_getClass(site->className);
-    if (!target) return false;
+    if (!target) return caml_diag::DecideRuntimeInstall({false, false, false, false, false}) == caml_diag::RuntimeInstallDecision::Installed;
     SEL selector = sel_registerName(site->selectorName);
     Method method = site->classMethod ? class_getClassMethod(target, selector) : class_getInstanceMethod(target, selector);
-    if (!method) return false;
+    if (!method) return caml_diag::DecideRuntimeInstall({true, false, false, false, false}) == caml_diag::RuntimeInstallDecision::Installed;
     const char *runtimeEncoding = method_getTypeEncoding(method);
-    if (!ABIShapeMatches(runtimeEncoding, site->encoding)) return false;
+    if (!ABIShapeMatches(runtimeEncoding, site->encoding))
+        return caml_diag::DecideRuntimeInstall({true, true, false, false, false}) == caml_diag::RuntimeInstallDecision::Installed;
     Class hookClass = site->classMethod ? object_getClass(target) : target;
     MSHookMessageEx(hookClass, selector, site->replacement, site->original);
-    return *site->original != NULL;
+    return caml_diag::DecideRuntimeInstall({true, true, true, true, *site->original != NULL}) ==
+           caml_diag::RuntimeInstallDecision::Installed;
 }
 
 // POD descriptors are populated synchronously by the caller before the installer sees them.

@@ -28,7 +28,13 @@ def violations(commit: str | None) -> list[str]:
     failures = []
     if "THEOS_COMMIT: 5280bd038207e14f8bd76f5417aa2fe641c03228" not in workflow:
         failures.append("immutable rootless Theos pin")
-    if "make clean stage FINALPACKAGE=0 STRIP=0" not in workflow:
+    has_exact_release_companion = (
+        "make clean package FINALPACKAGE=1 STRIP=0" in workflow
+        and "source_dylib=" in workflow
+        and "lipo \"$source_dylib\" -thin \"$arch\"" in workflow
+        and "strip -x \"$source_dylib\"" in workflow
+    )
+    if not has_exact_release_companion:
         failures.append("pre-strip symbol collection")
     if "ReconcileGlyphView" not in source:
         failures.append("live glyph reconciliation")
@@ -43,10 +49,22 @@ def violations(commit: str | None) -> list[str]:
     return failures
 
 
-current_failures = violations(None)
-if current_failures:
-    raise SystemExit("current candidate still violates: " + ", ".join(current_failures))
-rejected_failures = violations(REJECTED)
-if len(rejected_failures) < 4:
-    raise SystemExit(f"rejected candidate was not rejected by enough structural checks: {rejected_failures}")
-print("PASS: current candidate clears structural regressions; rejected 97eabba fails " + ", ".join(rejected_failures))
+def main() -> int:
+    """Return zero only when the current tree passes and the historical tree fails."""
+    current_failures = violations(None)
+    if current_failures:
+        raise SystemExit("ASSERT_CURRENT_ZERO failed: " + ", ".join(current_failures))
+    rejected_failures = violations(REJECTED)
+    if len(rejected_failures) < 4:
+        raise SystemExit(
+            f"ASSERT_REJECTED_FAILS failed: expected >=4 violations, got {rejected_failures}"
+        )
+    print(
+        "PASS: ASSERT_CURRENT_ZERO and ASSERT_REJECTED_FAILS "
+        "(" + ", ".join(rejected_failures) + ")"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

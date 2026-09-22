@@ -58,31 +58,25 @@ jobs:
           set -euo pipefail
           python3 -B tests/caml-diagnostic-contract.py
           bun tests/static-check.ts
-          make clean stage FINALPACKAGE=0 STRIP=0 THEOS_PACKAGE_SCHEME=rootless
+          # Build the exact release binary once without stripping. The package is
+          # then copied, stripped in place, and repacked so UUIDs and function
+          # starts remain identical between each companion and final slice.
+          make clean package FINALPACKAGE=1 STRIP=0 THEOS_PACKAGE_SCHEME=rootless
           rm -rf dist
-          mkdir -p dist/packages dist/symbols/arm64 dist/symbols/arm64e
-          collect_unstripped() {
-            arch="$1"
-            target="$2"
-            output="$3"
-            candidates=()
-            while IFS= read -r candidate; do candidates+=("$candidate"); done < <(find ".theos/obj/debug/$arch" -type f -name "$target" ! -path '*.dSYM/*' -print)
-            printf 'Unstripped candidates for %s/%s:\n' "$arch" "$target"
-            printf '  %s\n' "${candidates[@]}"
-            test "${#candidates[@]}" -eq 1
-            test -s "${candidates[0]}"
-            cp "${candidates[0]}" "$output"
-            test -s "$output"
-          }
+          mkdir -p dist/packages dist/symbols/arm64 dist/symbols/arm64e "$RUNNER_TEMP/plampycc-package"
+          source_package="$(find packages -type f -name '*.deb' -print -quit)"
+          test -n "$source_package"
+          dpkg-deb -R "$source_package" "$RUNNER_TEMP/plampycc-package"
+          source_dylib="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC.dylib' -print -quit)"
+          test -n "$source_dylib"
           for arch in arm64 arm64e; do
-            collect_unstripped "$arch" PlampyCC.dylib "dist/symbols/$arch/PlampyCC.dylib"
-            collect_unstripped "$arch" PlampyCC "dist/symbols/$arch/PlampyCC"
+            lipo "$source_dylib" -thin "$arch" -output "dist/symbols/$arch/PlampyCC.dylib"
+            test -s "dist/symbols/$arch/PlampyCC.dylib"
           done
-          test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 4
-          make clean package FINALPACKAGE=1 STRIP=1 THEOS_PACKAGE_SCHEME=rootless
-          find packages -type f -name '*.deb' -exec cp {} dist/packages/ \;
+          test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 2
+          strip -x "$source_dylib"
+          dpkg-deb -b "$RUNNER_TEMP/plampycc-package" "dist/packages/$(basename "$source_package")"
           test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
-          python3 -B tests/caml-diagnostic-artifact.py dist
           git rev-parse HEAD > dist/source-commit.txt
           xcodebuild -version > dist/xcode-version.txt
           {
@@ -93,7 +87,8 @@ jobs:
             xcrun clang --version
           } > dist/toolchain.txt
           python3 .github/workflows/emit-manifest.py
-          (cd dist && find packages symbols source-commit.txt xcode-version.txt toolchain.txt -type f -print | sort | xargs shasum -a 256 > SHA256SUMS)
+          (cd dist && find packages symbols source-commit.txt xcode-version.txt toolchain.txt build-manifest.json -type f -print | sort | xargs shasum -a 256 > SHA256SUMS)
+          python3 -B tests/caml-diagnostic-artifact.py dist
       - name: Upload package, provenance, and symbols
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

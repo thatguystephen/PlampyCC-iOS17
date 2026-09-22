@@ -40,13 +40,20 @@ def source_order(source: str) -> None:
     install = constructor.index("InstallCAMLDiagnosticSites")
     if not storage < build < install:
         raise SystemExit("descriptor initialization does not precede first installer use")
-    if "gSites" in source or "component = nextComponent" in source:
-        raise SystemExit("unsafe dynamic descriptor or NULL component traversal remains")
+    if "gSites" in source or "component = nextComponent" in source or "gDiagnosticInstalledMask" in source:
+        raise SystemExit("unsafe dynamic descriptor or parallel installed-state model remains")
+    if "__unsafe_unretained id" not in source:
+        raise SystemExit("observer contexts do not use borrowed ownership")
+    if "caml_diag::AtomicOutputState" not in source or "caml_diag::CompleteLinePrefix" not in source:
+        raise SystemExit("production does not call the shared atomic/recovery policy")
+    if "gDarwinSyscalls" not in source or "CAMLDiagnosticHooks.mm" in source:
+        raise SystemExit("Darwin syscall adapter boundary is absent or hook shim leaked into observer source")
+    for name in ("CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook", "CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook"):
+        if re.search(rf"\b{name}\s*\([^;]*\)\s*\{{", source):
+            raise SystemExit(f"replacement IMP body remains in diagnostic source: {name}")
     walker = source[source.index("OpenDiagnosticDirectory"):source.index("ReadExistingEvents")]
     if "if (leaf) break;" not in walker or "bool leaf = *cursor == '\\0'" not in walker:
         raise SystemExit("final component traversal termination is not explicit")
-    if "__unsafe_unretained id" not in source:
-        raise SystemExit("observer contexts do not use borrowed ownership")
 
 
 def observer_instruction_ranges(symbols: str, disassembly: str) -> dict[str, str]:
@@ -79,6 +86,116 @@ def observer_instruction_ranges(symbols: str, disassembly: str) -> dict[str, str
             raise SystemExit(f"generated disassembly has no instruction range for {observer}")
         ranges[observer] = "\n".join(lines)
     return ranges
+
+
+HOOK_NAMES = (
+    "CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook",
+    "CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook",
+)
+ORIGINAL_SLOT_NAMES = (
+    "gOriginalButtonPackage", "gOriginalRoundPackage", "gOriginalSliderPackage",
+    "gOriginalFactory", "gOriginalButtonState", "gOriginalSliderState",
+)
+DESCRIPTOR_NAMES = ("BuildCAMLDiagnosticSites", "InstallCAMLDiagnosticSites")
+
+
+def sha256(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def verify_checksums(artifact: Path) -> None:
+    manifest = artifact / "SHA256SUMS"
+    if not manifest.is_file():
+        raise SystemExit("artifact checksum manifest is absent")
+    expected: dict[str, str] = {}
+    for line in manifest.read_text().splitlines():
+        digest, name = line.split(maxsplit=1)
+        expected[name] = digest
+    if not expected:
+        raise SystemExit("artifact checksum manifest is empty")
+    for name, digest in expected.items():
+        path = artifact / name
+        if not path.is_file() or sha256(path) != digest:
+            raise SystemExit(f"checksum mismatch: {name}")
+    if any(name.startswith(".ci-artifacts/") or name.startswith("/") for name in expected):
+        raise SystemExit("checksum manifest contains an absolute or local artifact path")
+
+
+def pass_gate(number: int, name: str) -> None:
+    print(f"PASS gate {number:02d}: {name}")
+
+
+
+
+def symbol_addresses(symbols: str, names: tuple[str, ...]) -> dict[str, int]:
+    found: dict[str, int] = {}
+    for line in symbols.splitlines():
+        match = re.match(r"^([0-9a-fA-F]+)\s+.*\s+(\S+)$", line.strip())
+        if match is None:
+            continue
+        name = match.group(2).lstrip("_")
+        for expected in names:
+            if name == expected:
+                found[expected] = int(match.group(1), 16)
+    return found
+
+
+def disassembly_ranges(disassembly: str, addresses: dict[str, int]) -> dict[str, str]:
+    instructions: list[tuple[int, str]] = []
+    for line in disassembly.splitlines():
+        match = re.match(r"^\s*([0-9a-fA-F]{8,})\s+", line)
+        if match is not None:
+            instructions.append((int(match.group(1), 16), line))
+    starts = sorted(set(addresses.values()))
+    ranges: dict[str, str] = {}
+    for name, start in addresses.items():
+        end = next((value for value in starts if value > start), start + 0x1000)
+        lines = [line for address, line in instructions if start <= address < end]
+        if not lines:
+            raise SystemExit(f"final slice has no instructions for {name}")
+        ranges[name] = "\n".join(lines)
+    return ranges
+
+
+def uuid_of(binary: Path) -> str:
+    load_commands = run(["otool", "-l", str(binary)])
+    match = re.search(r"LC_UUID\s+.*?uuid\s+([0-9A-Fa-f-]+)", load_commands, re.S)
+    if match is None:
+        raise SystemExit(f"{binary}: Mach-O UUID load command is absent")
+    return match.group(1).lower()
+
+
+def verify_stripped_slice(binary: Path, companion: Path, architecture: str) -> None:
+    if uuid_of(binary) != uuid_of(companion):
+        raise SystemExit(f"{binary}: UUID does not match its exact unstripped companion")
+    symbols = run(["nm", "-arch", architecture, "-a", str(companion)])
+    required = HOOK_NAMES + ("CAMLDiagnosticPrimitiveAdmission",) + ORIGINAL_SLOT_NAMES + DESCRIPTOR_NAMES
+    addresses = symbol_addresses(symbols, required)
+    missing = [name for name in required if name not in addresses]
+    if missing:
+        raise SystemExit(f"{companion}: exact unstripped map is incomplete: {', '.join(missing)}")
+    if len({addresses[name] for name in ORIGINAL_SLOT_NAMES}) != len(ORIGINAL_SLOT_NAMES):
+        raise SystemExit(f"{companion}: original IMP slots are not six distinct addresses")
+    if addresses["BuildCAMLDiagnosticSites"] >= addresses["InstallCAMLDiagnosticSites"]:
+        raise SystemExit(f"{companion}: descriptor construction is not before installation")
+    disassembly = run(["otool", "-arch", architecture, "-tvV", str(binary)])
+    ranges = disassembly_ranges(disassembly, {name: addresses[name] for name in HOOK_NAMES})
+    primitive = disassembly_ranges(disassembly, {"CAMLDiagnosticPrimitiveAdmission": addresses["CAMLDiagnosticPrimitiveAdmission"]})["CAMLDiagnosticPrimitiveAdmission"]
+    admission = addresses["CAMLDiagnosticPrimitiveAdmission"]
+    forbidden = ("objc_retain", "objc_storeStrong", "objc_release", "objc_msgSend")
+    if any(token in primitive for token in forbidden):
+        raise SystemExit(f"{binary}: primitive admission performs Objective-C ownership/message work")
+    for name, body in ranges.items():
+        lines = body.splitlines()
+        admission_index = next((index for index, line in enumerate(lines)
+                                if re.search(rf"\b{admission:x}\b", line)), None)
+        if admission_index is None:
+            raise SystemExit(f"{binary}: {name} has no mapped primitive-admission call")
+        if any(any(token in line for token in forbidden) for line in lines[:admission_index]):
+            raise SystemExit(f"{binary}: {name} has ownership/message work before admission")
+        if not any("blr" in line for line in lines[admission_index + 1:]):
+            raise SystemExit(f"{binary}: {name} has no original-IMP indirect call after admission")
 
 
 def verify_slice(binary: Path, require_symbols: bool) -> None:
@@ -146,23 +263,36 @@ def main() -> None:
     parser.add_argument("--source", type=Path, default=Path("src/CAMLDiagnostic.xm"))
     args = parser.parse_args()
     source_order(args.source.read_text())
+    pass_gate(1, "source descriptor/admission order")
+    companions = {}
+    for number, architecture in ((2, "arm64"), (4, "arm64e")):
+        companion = args.artifact / "symbols" / architecture / "PlampyCC.dylib"
+        if not companion.is_file() or companion.stat().st_size == 0:
+            raise SystemExit(f"missing unstripped {architecture} diagnostic binary")
+        verify_slice(companion, require_symbols=True)
+        companions[architecture] = companion
+        pass_gate(number, f"{architecture} exact unstripped companion")
+        pass_gate(number + 1, f"{architecture} companion descriptor and observer checks")
+    packages = sorted((args.artifact / "packages").glob("*.deb"))
+    if len(packages) != 1:
+        raise SystemExit(f"expected one final package, found {len(packages)}")
+    pass_gate(6, "single rootless package")
     with tempfile.TemporaryDirectory(prefix="caml-artifact-") as scratch:
         scratch_path = Path(scratch)
-        for architecture in ("arm64", "arm64e"):
-            companion = args.artifact / "symbols" / architecture / "PlampyCC.dylib"
-            if not companion.is_file() or companion.stat().st_size == 0:
-                raise SystemExit(f"missing unstripped {architecture} diagnostic binary")
-            verify_slice(companion, require_symbols=True)
-        packages = sorted((args.artifact / "packages").glob("*.deb"))
-        if len(packages) != 1:
-            raise SystemExit(f"expected one final package, found {len(packages)}")
         universal = scratch_path / "PlampyCC.dylib"
         extract_packaged_dylib(packages[0], universal)
-        for architecture in ("arm64", "arm64e"):
+        pass_gate(7, "extract packaged dylib")
+        for number, architecture in ((8, "arm64"), (10, "arm64e")):
+            companion = companions[architecture]
             thin = scratch_path / f"PlampyCC-{architecture}.dylib"
             run(["lipo", str(universal), "-thin", architecture, "-output", str(thin)])
             verify_slice(thin, require_symbols=False)
-    print("PASS: unstripped and final packaged arm64/arm64e slices preserve deterministic descriptors, guarded ARC boundaries, and no legacy initializer")
+            verify_stripped_slice(thin, companion, architecture)
+            pass_gate(number, f"{architecture} UUID-matched final machine-code boundary")
+            pass_gate(number + 1, f"{architecture} final package literals and legacy-initializer gate")
+    verify_checksums(args.artifact)
+    pass_gate(12, "all declared artifact checksums")
+    print("PASS: 12 package gates/checksum checks; exact UUID-matched stripped arm64/arm64e hook boundaries verified")
 
 
 if __name__ == "__main__":

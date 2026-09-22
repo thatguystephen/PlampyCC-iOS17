@@ -47,9 +47,10 @@ for (const rule of [
   "$(s" + "hell mv $(i) $(_THEOS_SCHEME_STAGE))",
   "TARGET_STRIP = :",
 ]) assert(workflow.includes(rule), `workflow does not verify Theos rule: ${rule}`);
-assert(workflow.includes("make clean stage FINALPACKAGE=0 STRIP=0") && workflow.includes("make clean package FINALPACKAGE=1 STRIP=1"), "workflow does not capture symbols before release stripping");
-for (const target of ["PlampyCC.dylib", "PlampyCC"]) assert(workflow.includes(`collect_unstripped \"$arch\" ${target}`), `workflow misses unstripped ${target}`);
-assert(workflow.includes("find \".theos/obj/debug/$arch\" -type f") && workflow.includes("! -path '*.dSYM/*'"), "symbol collection can select a DWARF duplicate instead of the target binary");
+assert(workflow.includes("make clean package FINALPACKAGE=1 STRIP=0"), "workflow does not build the exact unstripped release companion");
+assert(workflow.includes("dpkg-deb -R \"$source_package\"") && workflow.includes("lipo \"$source_dylib\" -thin \"$arch\""), "workflow does not collect companions from the exact package binary");
+assert(workflow.includes("strip -x \"$source_dylib\"") && workflow.includes("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\""), "workflow does not strip and repack the exact release binary");
+assert(workflow.includes("SHA256SUMS") && workflow.includes("tests/caml-diagnostic-artifact.py dist"), "workflow does not emit and verify artifact checksums");
 
 for (const path of [
   "PlampyCC.plist",

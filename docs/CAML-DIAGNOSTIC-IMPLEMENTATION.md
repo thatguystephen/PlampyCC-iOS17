@@ -4,7 +4,7 @@ Status: observer-only implementation; disabled by default.
 
 ## Hook list
 
-The dedicated `src/CAMLDiagnostic.xm` module uses an install-once architecture: it constructs six POD descriptors synchronously inside the process constructor, then installs each PAC-safe `MSHookMessageEx` observer once after class, selector, and runtime ABI checks:
+The diagnostic is split into three explicit boundaries: `src/CAMLDiagnosticHooks.mm` contains the six replacement IMPs and is compiled with ARC disabled; `src/CAMLDiagnostic.xm` owns ARC observer bodies and install-once descriptors; `src/CAMLDiagnosticCore.hpp` and `src/CAMLDiagnosticIO.hpp` contain the portable policies and injected Darwin syscall adapter. The observer module constructs six POD descriptors synchronously inside the process constructor, then installs each PAC-safe `MSHookMessageEx` observer once after class, selector, and runtime ABI checks:
 
 - `-[CCUIButtonModuleView setGlyphPackageDescription:]` — `v24@0:8@16`
 - `-[CCUIRoundButton setGlyphPackageDescription:]` — `v24@0:8@16`
@@ -15,7 +15,7 @@ The dedicated `src/CAMLDiagnostic.xm` module uses an install-once architecture: 
 
 Quoted Objective-C class annotations are normalized before ABI-shape comparison. A missing class, selector, or incompatible runtime encoding skips that site without changing the stock implementation. The constructor records truthful per-site installation results (`q` in the install event) rather than treating constructor completion as installation success. The existing functional `dismiss` hook calls the narrow `CAMLDiagnosticFlushAtDismiss()` interface after the original dismiss call; when diagnostics are disabled this is a no-op, so functional behavior remains unchanged. No route-context hook is included.
 
-Every replacement keeps a separate original-IMP slot, records only an observation, and calls the original exactly once with the original arguments. Factory return values are returned unchanged. No setter argument, package description, glyph state, or return value is replaced.
+Every replacement keeps a separate original-IMP slot, performs one POD-only `CAMLDiagnosticPrimitiveAdmission` check before entering the observer, records at most one observation, and calls the original exactly once with the original arguments. Factory return values are returned unchanged. No setter argument, package description, glyph state, or return value is replaced. The primitive boundary performs no message send, retain, allocation, logging, or filesystem operation; the ARC observer body owns all Objective-C work and fails closed on exceptions.
 
 ## Preferences
 
@@ -35,7 +35,7 @@ The directory is created with mode `0700`; the file is restricted to `0600`. Eve
 
 `x` is a coarse path classification (`private`, `var`, `app-container`, `Applications`, or `other`). Full paths, package URLs, CAML/XML contents, asset bytes, user data, and raw pointer values are never serialized. Package names, class names, and state strings are emitted only when they exactly match the fixed approved-value allowlists; every other value becomes `unknown`, `unknown-class`, or `unknown-state`.
 
-The in-memory ring contains at most 512 events. Identical `(site, pkg, state)` tuples are suppressed for 1000 ms; repeats inside 100 ms update one event's `repeat` count. Matching `(site, pkg)` repeats inside 100 ms are also collapsed. A process-session cap of 2000 accepted events prevents unbounded growth. Flushes use descriptor-based `openat`/`fstat`/`O_NOFOLLOW` confinement, reject unsafe owners/modes/non-regular files, write a complete bounded replacement to a temporary file, `fsync`, atomically `renameat` it, and `fsync` the directory. Restart recovery discards an incomplete final line and retains at most the newest 1 MiB of complete records. C++ RAII owns every directory/temp descriptor; a temp is unlinked on every pre-rename failure/exception, while a post-rename directory-fsync failure leaves the complete committed file and disables further logging. No synchronous queue dispatch is used.
+The in-memory ring contains at most 512 events. The shared `CAMLDiagnosticCore.hpp` policy owns allowlists, tuple/pair deduplication, session/ring limits, complete-line recovery, and the atomic output state machine; the observer calls those helpers directly rather than maintaining a second host-only model. Flushes use the injected `CAMLDiagnosticIO.hpp` adapter: the Darwin implementation supplies `openat`/`pread`/`write`/`fsync`/`renameat`/`unlinkat`/`close`, while native tests inject deterministic short-write and state-fault callbacks. Descriptor-based `O_NOFOLLOW` confinement rejects unsafe owners/modes/non-regular files, writes a complete bounded replacement to a temporary file, syncs it, atomically renames it, and syncs the directory. Restart recovery discards an incomplete final line and retains at most the newest 1 MiB of complete records. C++ RAII owns every directory/temp descriptor; a temp is unlinked on every pre-rename failure/exception, while a post-rename directory-fsync failure leaves the complete committed file and disables further logging. No synchronous queue dispatch is used.
 
 ## Build ID and provenance
 
@@ -47,7 +47,7 @@ Final workflow run URL/ID and downloaded artifact verification are recorded in t
 
 ## Verification performed locally
 
-`tests/caml-diagnostic-contract.py` exercises the production-sensitive source contract and its mutation matrix for each guard predicate, runtime metadata/install operation, descriptor traversal, sensitive filesystem operation, exact original count/arguments/return, allowlist boundary, deduplication, ring/session bounds, EINTR, all atomic-write faults, stale-temp/incomplete-tail recovery, and retention saturation. Its host filesystem cases are supplemental fault probes; the production source is the authority and each weakened production primitive is required to fail the contract. `tests/caml-diagnostic-artifact.py` audits both unstripped slices and thin slices extracted from the final packaged `.deb`. The existing `src/Tweak.xm` functional behavior remains unchanged apart from the no-op-when-disabled dismissal flush seam; diagnostics are isolated in the added module.
+`tests/caml-diagnostic-contract.py` verifies the source-level boundary split, non-ARC compile guard, exact hook ordering and pass-through, primitive admission purity, deterministic descriptors, adapter wiring, and invokes `tests/native-caml-diagnostic.cpp` against the production C++ headers. The native test injects a fake syscall adapter for short writes and exercises policy, recovery, and atomic-state fault transitions; it does not reimplement those policies in Python. `tests/caml-diagnostic-artifact.py` audits both unstripped slices and thin slices extracted from the final packaged `.deb`. The existing `src/Tweak.xm` functional behavior remains unchanged apart from the no-op-when-disabled dismissal flush seam; diagnostics are isolated in the added module.
 
 ## Known limitations
 
