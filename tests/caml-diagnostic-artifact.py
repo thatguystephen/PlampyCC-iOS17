@@ -141,13 +141,23 @@ def symbol_addresses(symbols: str, names: tuple[str, ...]) -> dict[str, int]:
     return found
 
 
-def disassembly_ranges(disassembly: str, addresses: dict[str, int]) -> dict[str, str]:
+def all_symbol_addresses(symbols: str) -> dict[str, int]:
+    found: dict[str, int] = {}
+    for line in symbols.splitlines():
+        match = re.match(r"^([0-9a-fA-F]+)\s+.*\s+(\S+)$", line.strip())
+        if match is not None:
+            found[match.group(2).lstrip("_")] = int(match.group(1), 16)
+    return found
+
+
+def disassembly_ranges(disassembly: str, addresses: dict[str, int], boundaries: dict[str, int] | None = None) -> dict[str, str]:
     instructions: list[tuple[int, str]] = []
     for line in disassembly.splitlines():
         match = re.match(r"^\s*([0-9a-fA-F]{8,})\s+", line)
         if match is not None:
             instructions.append((int(match.group(1), 16), line))
-    starts = sorted(set(addresses.values()))
+    starts = sorted(set((boundaries or addresses).values()))
+    starts = [value for value in starts if value >= min(addresses.values())]
     ranges: dict[str, str] = {}
     for name, start in addresses.items():
         end = next((value for value in starts if value > start), start + 0x1000)
@@ -191,8 +201,9 @@ def verify_stripped_slice(binary: Path, companion: Path, architecture: str) -> N
     if addresses["BuildCAMLDiagnosticSites"] >= addresses["InstallCAMLDiagnosticSites"]:
         raise SystemExit(f"{companion}: descriptor construction is not before installation")
     disassembly = run(["otool", "-arch", architecture, "-tvV", str(binary)])
-    ranges = disassembly_ranges(disassembly, {name: addresses[name] for name in HOOK_NAMES})
-    primitive = disassembly_ranges(disassembly, {"CAMLDiagnosticPrimitiveAdmission": addresses["CAMLDiagnosticPrimitiveAdmission"]})["CAMLDiagnosticPrimitiveAdmission"]
+    boundaries = all_symbol_addresses(symbols)
+    ranges = disassembly_ranges(disassembly, {name: addresses[name] for name in HOOK_NAMES}, boundaries)
+    primitive = disassembly_ranges(disassembly, {"CAMLDiagnosticPrimitiveAdmission": addresses["CAMLDiagnosticPrimitiveAdmission"]}, boundaries)["CAMLDiagnosticPrimitiveAdmission"]
     admission = addresses["CAMLDiagnosticPrimitiveAdmission"]
     forbidden = ("objc_retain", "objc_storeStrong", "objc_release", "objc_msgSend")
     if any(token in primitive for token in forbidden):
