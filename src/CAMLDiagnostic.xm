@@ -110,9 +110,6 @@ static uint64_t DiagnosticMonotonicMilliseconds(void) {
     return nanos / 1000000ULL;
 }
 
-static const char * const kUnknownPackage = caml_diag::kUnknownPackage;
-static const char * const kUnknownState = caml_diag::kUnknownState;
-static const char * const kUnknownClass = caml_diag::kUnknownClass;
 static void CopyFixedCString(char *destination, size_t capacity, const char *value) {
     if (capacity == 0) return;
     destination[0] = '\0';
