@@ -211,7 +211,8 @@ def verify_stripped_slice(binary: Path, companion: Path, architecture: str) -> N
     for name, body in ranges.items():
         lines = body.splitlines()
         admission_index = next((index for index, line in enumerate(lines)
-                                if re.search(rf"\b{admission:x}\b", line)), None)
+                                if re.search(rf"(?:0x)?0*{admission:x}(?:\b|\s|$)", line)
+                                or "CAMLDiagnosticPrimitiveAdmission" in line), None)
         if admission_index is None:
             raise SystemExit(f"{binary}: {name} has no mapped primitive-admission call")
         if any(any(token in line for token in forbidden) for line in lines[:admission_index]):
