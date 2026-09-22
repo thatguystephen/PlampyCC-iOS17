@@ -67,13 +67,14 @@ jobs:
           source_package="$(find packages -type f -name '*.deb' -print -quit)"
           test -n "$source_package"
           dpkg-deb -R "$source_package" "$RUNNER_TEMP/plampycc-package"
-          source_dylib="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC.dylib' -print -quit)"
+          release_dylib="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC.dylib' -print -quit)"
+          source_dylib="$(find .theos -type f -path '*/PlampyCC.dSYM/Contents/Resources/DWARF/PlampyCC' -print -quit)"
           source_preferences="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC' -print -quit)"
-          test -n "$source_dylib" && test -n "$source_preferences"
+          test -n "$release_dylib" && test -n "$source_dylib" && test -n "$source_preferences"
           for target in PlampyCC.dylib PlampyCC; do
-            if [ "$target" = PlampyCC.dylib ]; then source_binary="$source_dylib"; else source_binary="$source_preferences"; fi
+            if [ "$target" = PlampyCC.dylib ]; then source_binary="$release_dylib"; symbol_binary="$source_dylib"; else source_binary="$source_preferences"; symbol_binary="$source_preferences"; fi
             for arch in arm64 arm64e; do
-              lipo "$source_binary" -thin "$arch" -output "dist/symbols/$arch/$target"
+              lipo "$symbol_binary" -thin "$arch" -output "dist/symbols/$arch/$target"
               test -s "dist/symbols/$arch/$target"
             done
             strip -x "$source_binary"

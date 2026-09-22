@@ -32,7 +32,7 @@ def violations(commit: str | None) -> list[str]:
         "make clean package FINALPACKAGE=1 STRIP=0" in workflow
         and "source_dylib=" in workflow
         and "source_preferences=" in workflow
-        and "lipo \"$source_binary\" -thin \"$arch\"" in workflow
+        and "lipo \"$symbol_binary\" -thin \"$arch\"" in workflow
         and "strip -x \"$source_binary\"" in workflow
     )
     if not has_exact_release_companion:
