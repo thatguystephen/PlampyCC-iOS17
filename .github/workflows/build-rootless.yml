@@ -68,14 +68,20 @@ jobs:
           test -n "$source_package"
           dpkg-deb -R "$source_package" "$RUNNER_TEMP/plampycc-package"
           release_dylib="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC.dylib' -print -quit)"
-          source_dylib="$(find .theos/obj/arm64 -type f -path '*/PlampyCC.dSYM/Contents/Resources/DWARF/PlampyCC' -print -quit)"
+          source_dylib=""
+          while IFS= read -r candidate; do
+            if nm -a "$candidate" | grep -q 'CAMLButtonPackageHook'; then source_dylib="$candidate"; break; fi
+          done < <(find .theos/obj/arm64 -type f -name 'PlampyCC.dylib' -print)
           source_preferences="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC' -print -quit)"
           test -n "$release_dylib" && test -n "$source_dylib" && test -n "$source_preferences"
           for target in PlampyCC.dylib PlampyCC; do
             if [ "$target" = PlampyCC.dylib ]; then source_binary="$release_dylib"; else source_binary="$source_preferences"; fi
             for arch in arm64 arm64e; do
               if [ "$target" = PlampyCC.dylib ]; then
-                symbol_binary="$(find ".theos/obj/$arch" -type f -path '*/PlampyCC.dSYM/Contents/Resources/DWARF/PlampyCC' -print -quit)"
+                symbol_binary=""
+                while IFS= read -r candidate; do
+                  if nm -a "$candidate" | grep -q 'CAMLButtonPackageHook'; then symbol_binary="$candidate"; break; fi
+                done < <(find ".theos/obj/$arch" -type f -name 'PlampyCC.dylib' -print)
               else
                 symbol_binary="$source_preferences"
               fi
