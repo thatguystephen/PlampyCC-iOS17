@@ -68,13 +68,17 @@ jobs:
           test -n "$source_package"
           dpkg-deb -R "$source_package" "$RUNNER_TEMP/plampycc-package"
           source_dylib="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC.dylib' -print -quit)"
-          test -n "$source_dylib"
-          for arch in arm64 arm64e; do
-            lipo "$source_dylib" -thin "$arch" -output "dist/symbols/$arch/PlampyCC.dylib"
-            test -s "dist/symbols/$arch/PlampyCC.dylib"
+          source_preferences="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC' -print -quit)"
+          test -n "$source_dylib" && test -n "$source_preferences"
+          for target in PlampyCC.dylib PlampyCC; do
+            if [ "$target" = PlampyCC.dylib ]; then source_binary="$source_dylib"; else source_binary="$source_preferences"; fi
+            for arch in arm64 arm64e; do
+              lipo "$source_binary" -thin "$arch" -output "dist/symbols/$arch/$target"
+              test -s "dist/symbols/$arch/$target"
+            done
+            strip -x "$source_binary"
           done
-          test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 2
-          strip -x "$source_dylib"
+          test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 4
           dpkg-deb -b "$RUNNER_TEMP/plampycc-package" "dist/packages/$(basename "$source_package")"
           test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
           git rev-parse HEAD > dist/source-commit.txt

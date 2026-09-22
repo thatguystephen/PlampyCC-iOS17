@@ -128,7 +128,7 @@ with tempfile.TemporaryDirectory(prefix="caml-contract-") as directory:
 
 assert_true("runs-on: macos-15" in WORKFLOW and "test \"$(uname -m)\" = arm64" in WORKFLOW, "Apple Silicon rootless build preflight is missing")
 assert_true("tests/caml-diagnostic-contract.py" in WORKFLOW and "tests/caml-diagnostic-artifact.py" in WORKFLOW, "contract tests are not wired into CI")
-assert_true("make clean package FINALPACKAGE=1 STRIP=0" in WORKFLOW and "strip -x \"$source_dylib\"" in WORKFLOW, "exact release companion workflow is missing")
+assert_true("make clean package FINALPACKAGE=1 STRIP=0" in WORKFLOW and "source_preferences=" in WORKFLOW and "strip -x \"$source_binary\"" in WORKFLOW, "exact release companion workflow is missing")
 assert_true("dpkg-deb -R" in WORKFLOW and "dpkg-deb -b" in WORKFLOW and "SHA256SUMS" in WORKFLOW, "package extraction/repack/checksum path is missing")
 assert_true("pass_gate(12" in (ROOT / "tests/caml-diagnostic-artifact.py").read_text(), "twelve artifact gates are not declared")
 for phrase in ("Hook list", "kDiagnosticEnabled", "events.jsonl", "build ID", "device-test gate", "install-once"):
