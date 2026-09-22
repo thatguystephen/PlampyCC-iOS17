@@ -68,13 +68,19 @@ jobs:
           test -n "$source_package"
           dpkg-deb -R "$source_package" "$RUNNER_TEMP/plampycc-package"
           release_dylib="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC.dylib' -print -quit)"
-          source_dylib="$(find .theos -type f -path '*/PlampyCC.dSYM/Contents/Resources/DWARF/PlampyCC' -print -quit)"
+          source_dylib="$(find .theos/obj/arm64 -type f -path '*/PlampyCC.dSYM/Contents/Resources/DWARF/PlampyCC' -print -quit)"
           source_preferences="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC' -print -quit)"
           test -n "$release_dylib" && test -n "$source_dylib" && test -n "$source_preferences"
           for target in PlampyCC.dylib PlampyCC; do
-            if [ "$target" = PlampyCC.dylib ]; then source_binary="$release_dylib"; symbol_binary="$source_dylib"; else source_binary="$source_preferences"; symbol_binary="$source_preferences"; fi
+            if [ "$target" = PlampyCC.dylib ]; then source_binary="$release_dylib"; else source_binary="$source_preferences"; fi
             for arch in arm64 arm64e; do
-              lipo "$symbol_binary" -thin "$arch" -output "dist/symbols/$arch/$target"
+              if [ "$target" = PlampyCC.dylib ]; then
+                symbol_binary="$(find ".theos/obj/$arch" -type f -path '*/PlampyCC.dSYM/Contents/Resources/DWARF/PlampyCC' -print -quit)"
+              else
+                symbol_binary="$source_preferences"
+              fi
+              test -n "$symbol_binary"
+              if [ "$target" = PlampyCC.dylib ]; then cp "$symbol_binary" "dist/symbols/$arch/$target"; else lipo "$symbol_binary" -thin "$arch" -output "dist/symbols/$arch/$target"; fi
               test -s "dist/symbols/$arch/$target"
             done
             strip -x "$source_binary"

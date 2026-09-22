@@ -48,7 +48,7 @@ for (const rule of [
   "TARGET_STRIP = :",
 ]) assert(workflow.includes(rule), `workflow does not verify Theos rule: ${rule}`);
 assert(workflow.includes("make clean package FINALPACKAGE=1 STRIP=0"), "workflow does not build the exact unstripped release companion");
-assert(workflow.includes("dpkg-deb -R \"$source_package\"") && workflow.includes("source_dylib=") && workflow.includes("source_preferences=") && workflow.includes("lipo \"$symbol_binary\" -thin \"$arch\""), "workflow does not collect exact UUID companions");
+assert(workflow.includes("dpkg-deb -R \"$source_package\"") && workflow.includes("source_dylib=") && workflow.includes("source_preferences=") && workflow.includes("cp \"$symbol_binary\" \"dist/symbols/$arch/$target\""), "workflow does not collect exact UUID companions");
 assert(workflow.includes("strip -x \"$source_binary\"") && workflow.includes("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\""), "workflow does not strip and repack the exact release binary");
 assert(workflow.includes("SHA256SUMS") && workflow.includes("tests/caml-diagnostic-artifact.py dist"), "workflow does not emit and verify artifact checksums");
 
