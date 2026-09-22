@@ -1,5 +1,6 @@
 #include "../src/CAMLDiagnosticCore.hpp"
 #include "../src/CAMLDiagnosticIO.hpp"
+#include "../src/CAMLReplacementCore.hpp"
 #include <assert.h>
 #include <string.h>
 
@@ -93,6 +94,43 @@ static void TestRuntimeInstallDecision() {
     assert(DecideRuntimeInstall({true, true, true, true, false}) == RuntimeInstallDecision::OriginalUnavailable);
 }
 
+static void TestReplacementRouting() {
+    using namespace caml_replacement;
+    // Exact-name map route (verified sub_8c98 mechanism).
+    assert(strcmp(BundleDirectoryForPackage("timer", Site::Setter, 0), "TimerModule.bundle") == 0);
+    assert(BundleDirectoryForPackage("timer", Site::Setter, 1) == nullptr); // verified timer+Pulsar skip
+    assert(strcmp(BundleDirectoryForPackage("WiFi", Site::Setter, 0), "ConnectivityModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Bluetooth", Site::Setter, 1), "ConnectivityModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("StyleMode", Site::Setter, 0), "AppearanceModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Ringer-Leading-D73", Site::Setter, 0), "SpringBoard.framework") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Ringer-Minimal-D73", Site::Setter, 1), "SpringBoard.framework") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Mute", Site::Setter, 0), "MuteModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("dnd_cg_02", Site::Setter, 0), "FocusUI.framework") == 0);
+    assert(strcmp(BundleDirectoryForPackage("MPAVScreenMirroring", Site::Setter, 0), "AirPlayMirroringModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("replaykit-v2", Site::Setter, 0), "ReplayKitModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("HAE_1_x_1", Site::Setter, 1), "HearingAidsModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Brightness", Site::Setter, 0), "DisplayModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Volume", Site::Setter, 0), "MediaControls.framework") == 0);
+    // Fail-open on dictionary-miss semantics and empty identity.
+    assert(BundleDirectoryForPackage("unknown-package", Site::Setter, 0) == nullptr);
+    assert(BundleDirectoryForPackage("timer1", Site::Setter, 0) == nullptr);
+    assert(BundleDirectoryForPackage("", Site::Setter, 0) == nullptr);
+    // Verified slider containsString: route (sub_93cc) and its fail-open miss.
+    assert(strcmp(BundleDirectoryForPackage("Brightness", Site::Slider, 0), "DisplayModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("BrightnessControl", Site::Slider, 1), "DisplayModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Volume", Site::Slider, 0), "MediaControls.framework") == 0);
+    assert(strcmp(BundleDirectoryForPackage("Ringer-Volume-D73", Site::Slider, 1), "MediaControls.framework") == 0);
+    assert(BundleDirectoryForPackage("WiFi", Site::Slider, 0) == nullptr);
+    assert(BundleDirectoryForPackage("", Site::Slider, 0) == nullptr);
+    // Table shape: unique names, non-empty bundle directories.
+    for (size_t i = 0; i < kPackageBundleCount; ++i) {
+        assert(kPackageBundles[i].packageName[0] != '\0');
+        assert(kPackageBundles[i].bundleDirectory[0] != '\0');
+        for (size_t j = i + 1; j < kPackageBundleCount; ++j)
+            assert(strcmp(kPackageBundles[i].packageName, kPackageBundles[j].packageName) != 0);
+    }
+}
+
 static void TestAtomicFaultBoundary() {
     AtomicOutputState state;
     assert(state.Apply(AtomicOperation::Open));
@@ -131,6 +169,7 @@ int main() {
     TestRetention();
     TestInjectedSyscallAdapter();
     TestRuntimeInstallDecision();
+    TestReplacementRouting();
     TestAtomicFaultBoundary();
     return 0;
 }

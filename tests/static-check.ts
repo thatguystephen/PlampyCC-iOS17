@@ -29,6 +29,10 @@ const blocker = await read("CAML-ROUTING-BLOCKER.md");
 const control = await read("control");
 const prefsController = await read("prefs/RootListController.m");
 const prefsPlist = await read("prefs/Root.plist");
+const sites = await read("src/CAMLDiagnostic.xm");
+const hooks = await read("src/CAMLDiagnosticHooks.mm");
+const replacement = await read("src/CAMLReplacement.xm");
+const core = await read("src/CAMLReplacementCore.hpp");
 
 
 assert(makefile.includes("ARCHS = arm64 arm64e") && makefile.includes("THEOS_PACKAGE_SCHEME = rootless"), "rootless Make contract missing");
@@ -92,7 +96,42 @@ assert(source.includes("if (!current) {\n        ReleaseGlyphOverride(view);"), 
 assert(source.includes("[blur removeFromSuperview]") && source.includes("objc_setAssociatedObject(self, \"plampy.blur\", nil"), "wallpaper teardown does not release blur state");
 assert(source.includes("wall.alpha = [objc_getAssociatedObject(self, \"plampy.presented\") boolValue] ? 1 : 0"), "wallpaper reconciliation does not derive presentation visibility");
 assert(source.includes("objc_setAssociatedObject(self, \"plampy.presented\", @YES") && source.includes("@NO"), "presentation state is not tracked");
-for (const hook of ["Install(button, @selector(layoutSubviews)", "Install(button, @selector(setGlyphPackageDescription:)", "Install(round, @selector(didMoveToWindow)", "Install(NSClassFromString(@\"CCUIContinuousSliderView\")", "Install(overlay, @selector(viewDidLoad)"]) assert(source.includes(hook), `hook coverage missing ${hook}`);
+for (const hook of ["Install(button, @selector(layoutSubviews)", "Install(round, @selector(didMoveToWindow)", "Install(overlay, @selector(viewDidLoad)"]) assert(source.includes(hook), `hook coverage missing ${hook}`);
+assert(!source.includes("setGlyphPackageDescription:") && !source.includes("CCUIContinuousSliderView"), "Tweak.xm retains the stale CCUIContinuousSliderView package-setter layer");
+assert(!source.includes("orig_buttonPackage") && !source.includes("orig_roundPackage") && !source.includes("orig_sliderPackage"), "pass-through package hooks remain in Tweak.xm");
+assert(source.includes("bool PlampyCCFunctionalEnabled(void)") && source.includes("int PlampyCCThemeType(void)"), "functional preference state is not exported to the CAML seam");
+for (const site of ['"CCUIButtonModuleView", "setGlyphPackageDescription:"', '"CCUIRoundButton", "setGlyphPackageDescription:"', '"CCUIBaseSliderView", "setGlyphPackageDescription:"']) assert(sites.includes(site), `verified setter site missing: ${site}`);
+assert(!sites.includes('"CCUIContinuousSliderView"'), "slider site must move to the verified CCUIBaseSliderView superclass");
+
+// Functional animated CAML: verified construct-and-pass route, fail-open.
+assert(replacement.includes("ns_returns_retained") && replacement.includes("CAMLCreateReplacementDescription"), "construct-and-pass factory boundary missing");
+assert(replacement.includes("initWithPackageName:name inBundle:bundle") && replacement.includes("CAMLThemeRoot()"), "verified initializer route missing");
+assert(replacement.includes("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")"), "replacement theme root is not the rooted logical root");
+assert(replacement.includes("@catch (...)") && replacement.includes("return replacement; // +1"), "replacement factory lacks guarded +1 handoff");
+for (const fn of ["CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook"]) assert(hooks.includes(fn), `package hook missing ${fn}`);
+assert(hooks.includes("CAMLCreateReplacementDescription(description, false)") && hooks.includes("CAMLCreateReplacementDescription(description, true)"), "construct-and-pass factory calls missing");
+assert(hooks.includes("argument = replacement ? replacement : description"), "fail-open original-description fallback missing");
+assert(hooks.split("objc_release(replacement)").length - 1 === 3, "each package hook must own exactly one post-original release");
+assert(!hooks.includes("objc_release(description)"), "the borrowed incoming description must not be released");
+assert(core.includes("BundleDirectoryForPackage") && core.includes("\"timer\", \"TimerModule.bundle\"") && core.includes("themeType == 1"), "routing core missing verified timer/Pulsar skip");
+assert(core.includes("\"DisplayModule.bundle\"") && core.includes("\"MediaControls.framework\""), "routing core missing verified slider routes");
+
+// Mapping table and staged payload must agree in both directions.
+const tableEntries = [...core.matchAll(/\{"([^"]+)", "([^"]+)"\}/g)].map((match) => ({ name: match[1], bundle: match[2] }));
+assert(tableEntries.length >= 20, "replacement mapping table is missing entries");
+for (const theme of ["Plampy", "Pulsar"]) {
+  for (const entry of tableEntries) {
+    if (theme === "Plampy" && entry.name === "HAE_1_x_1") continue; // Pulsar-only package, fails open under Plampy
+    assert(await exists(`layout/var/mobile/Library/Application Support/PlampyCC/${theme}/Assets/${entry.bundle}/${entry.name}.ca/main.caml`),
+      `mapping target absent from staged payload: ${theme} ${entry.name} -> ${entry.bundle}`);
+  }
+}
+const mappedNames = new Set(tableEntries.map((entry) => entry.name));
+for (const file of new Bun.Glob("layout/var/mobile/Library/Application Support/PlampyCC/*/Assets/*/*.ca/main.caml").scanSync({ cwd: root, onlyFiles: true })) {
+  const parts = file.split("/");
+  const name = parts[parts.length - 2].replace(/\.ca$/, "");
+  assert(mappedNames.has(name), `staged animated package has no mapping entry: ${file}`);
+}
 assert(prefsController.includes("setPreferenceValue") && prefsController.includes("CFNotificationCenterPostNotification") && prefsPlist.includes("kEnabled"), "preference lifecycle coverage missing");
 for (const field of ["Package: xyz.cypwn.plampycc", "Architecture: iphoneos-arm64", "Depends:"]) assert(control.includes(field), `package metadata missing ${field}`);
 
@@ -118,7 +157,8 @@ for (const file of camlFiles) {
 }
 assert(camlReferenceCount === 81, `expected 81 CAML image references, found ${camlReferenceCount}`);
 assert(!source.includes("selectImage") && provenance.includes("pending a Steph product decision") && blocker.includes("Steph must decide"), "selectImage was silently waived or reintroduced");
-assert(blocker.includes("remains pass-through") && provenance.includes("pass-through"), "CAML pass-through scope is not explicit");
+assert(blocker.includes("construct-and-pass") && blocker.includes("runtime observations"), "CAML implementation status is not explicit in CAML-ROUTING-BLOCKER.md");
+assert(provenance.includes("construct-and-pass") && provenance.includes("not runtime-verified"), "CAML implementation status is not explicit in PROVENANCE.md");
 
 const repeatedPrefix = '<contents src="/var/jb/var/jb/var/mobile/Library/Application Support/PlampyCC/Plampy/Icon/Camera.png" />';
 let repeatedRejected = false;
@@ -151,4 +191,4 @@ assert(glyph.currentImage === "changed-stock", "changed stock image was overwrit
 
 for (const field of ["target_names", "exactly one package is required", "symbols must contain tweak and preferences targets", "unstrippedBinaries", "sha256"]) assert(emitter.includes(field), `manifest producer contract missing ${field}`);
 
-console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, rootless staging/strip contract, and producer/consumer manifest coverage");
+console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, rootless staging/strip contract, and producer/consumer manifest coverage");

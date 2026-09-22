@@ -1,5 +1,7 @@
 // PlampyCC 1.0.2 clean-room reconstruction for iOS 17.3.
-// CAML package routing remains pass-through until CAML-ROUTING-BLOCKER.md is cleared.
+// Animated CAML routing runs the verified construct-and-pass route in
+// src/CAMLReplacement.xm through the three verified setter seams; this file
+// owns static glyphs, wallpaper/blur, and the functional preference state.
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -7,6 +9,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <rootless.h>
 #import "CAMLDiagnostic.h"
+#import "PlampyCCState.h"
 
 static NSString * const kPrefsDomain = @"com.misakaproject.plampyCC";
 static NSString * const kPrefsChanged = @"com.misakaproject.plampyCC.settingsChanged";
@@ -14,7 +17,6 @@ static BOOL gEnabled, gWallpaper, gBlur;
 static NSInteger gTheme;
 static NSHashTable *gOverlays, *gGlyphViews;
 static void (*orig_layout)(id, SEL), (*orig_roundMove)(id, SEL);
-static void (*orig_buttonPackage)(id, SEL, id), (*orig_roundPackage)(id, SEL, id), (*orig_sliderPackage)(id, SEL, id);
 static void (*orig_overlayLoad)(id, SEL), (*orig_present)(id, SEL, BOOL, id), (*orig_dismiss)(id, SEL, BOOL, id);
 
 static NSString *ThemeName(void) { return gTheme == 1 ? @"Pulsar" : @"Plampy"; }
@@ -95,9 +97,6 @@ static void buttonLayout(id self, SEL cmd) {
     ReconcileGlyphView(self);
 }
 static void roundMove(id self, SEL cmd) { if (orig_roundMove) orig_roundMove(self, cmd); }
-static void buttonPackage(id self, SEL cmd, id package) { if (orig_buttonPackage) orig_buttonPackage(self, cmd, package); }
-static void roundPackage(id self, SEL cmd, id package) { if (orig_roundPackage) orig_roundPackage(self, cmd, package); }
-static void sliderPackage(id self, SEL cmd, id package) { if (orig_sliderPackage) orig_sliderPackage(self, cmd, package); }
 
 static UIView *Background(id self) {
     UIView *view = Call(self, @selector(view));
@@ -173,16 +172,15 @@ static void ReloadPrefs(CFNotificationCenterRef center, void *observer, CFString
     });
 }
 static void Install(Class cls, SEL sel, IMP imp, IMP *orig) { if (HasMethod(cls, sel)) MSHookMessageEx(cls, sel, imp, orig); }
+bool PlampyCCFunctionalEnabled(void) { return gEnabled; }
+int PlampyCCThemeType(void) { return (int)gTheme; }
 __attribute__((constructor)) static void init_plampycc(void) {
     ReloadPrefs(NULL, NULL, NULL, NULL, NULL);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadPrefs, (__bridge CFStringRef)kPrefsChanged, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     Class button = NSClassFromString(@"CCUIButtonModuleView");
     Install(button, @selector(layoutSubviews), (IMP)buttonLayout, (IMP *)&orig_layout);
-    Install(button, @selector(setGlyphPackageDescription:), (IMP)buttonPackage, (IMP *)&orig_buttonPackage);
     Class round = NSClassFromString(@"CCUIRoundButton");
     Install(round, @selector(didMoveToWindow), (IMP)roundMove, (IMP *)&orig_roundMove);
-    Install(round, @selector(setGlyphPackageDescription:), (IMP)roundPackage, (IMP *)&orig_roundPackage);
-    Install(NSClassFromString(@"CCUIContinuousSliderView"), @selector(setGlyphPackageDescription:), (IMP)sliderPackage, (IMP *)&orig_sliderPackage);
     Class overlay = NSClassFromString(@"CCUIModularControlCenterOverlayViewController");
     Install(overlay, @selector(viewDidLoad), (IMP)overlayLoad, (IMP *)&orig_overlayLoad);
     Install(overlay, @selector(presentAnimated:withCompletionHandler:), (IMP)present, (IMP *)&orig_present);

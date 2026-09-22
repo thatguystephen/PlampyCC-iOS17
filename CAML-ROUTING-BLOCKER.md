@@ -1,20 +1,27 @@
 # CAML routing compatibility boundary
 
-The source preserves CAML pass-through. All 81 source `src=` references are structurally extracted and normalized exactly once to `/var/jb/var/mobile/Library/Application Support/PlampyCC/<theme>/...`; the matching logical layout is `layout/var/mobile/...`, and the rootless scheme supplies `/var/jb` at packaging. This path correction does not implement or waive animated CAML routing.
+The verified 21D50 construct-and-pass route is implemented for the three setter seams. The implementation is intentionally bounded by `evidence/CAML-ABI-MAP-21D50.md`: it constructs a fresh `CCUICAPackageDescription` from the rooted theme bundle and passes it through the stock setter; it does not mutate live package-description ivars, bypass the setter, or claim runtime animation parity.
 
-Read-only evidence collected from the supplied iOS 17.3 header snapshot:
+The three setter hooks are:
 
-    rg -n 'CCUICAPackageDescription|setGlyphPackageDescription|packageDescription' <iOS-17-header-snapshot>
-    rg -l 'CCUI|ControlCenterUI|ControlCenterUIKit' <iOS-17-header-snapshot> --glob '*.h'
+- `CCUIButtonModuleView setGlyphPackageDescription:`
+- `CCUIRoundButton setGlyphPackageDescription:`
+- `CCUIBaseSliderView setGlyphPackageDescription:` (the 21D50 superclass move from `CCUIContinuousSliderView`)
 
-The first command found only forward declarations and glyph-package properties in `SBElasticRouteDisplayContext.h` and `SBElasticRouteDisplaying-Protocol.h`; it found no initializer, setter declaration, ownership annotation, producer, or call-site ABI. Read-only Mach-O inspection also ran:
+The route uses the incoming description's `packageURL` filename stem as module identity, the reconstructed exact-name map for button/round sites, the verified `Brightness`/`Volume` contains-string route for the slider site, the `timer` + Pulsar fail-open special case, and a rootless logical theme path. An unmapped package, disabled feature, non-conforming description, missing bundle/initializer/resource URL, or exception forwards the original description unchanged.
 
-    file <iOS-17-header-snapshot>/ControlCenterUI <iOS-17-header-snapshot>/ControlCenterUIKit
-    nm -arch arm64e -gU <iOS-17-header-snapshot>/ControlCenterUI
-    nm -arch arm64e -gU <iOS-17-header-snapshot>/ControlCenterUIKit
+Ownership is explicit: the ARC factory returns the `alloc/init` replacement at +1 (`ns_returns_retained`); the non-ARC setter shim passes that replacement (or the original description on fail-open) to the original IMP, then performs exactly one `objc_release` after the original call. The incoming borrowed description is never released. The original setter remains responsible for its verified retain/store behavior.
 
-`file` identified both supplied framework binaries as arm64e Mach-O. The filtered `nm` queries returned no `CCUICAPackageDescription`, glyph-package setter, target-class, or producer symbols. No usable `rootless.h` was present in the supplied headers. The supplied framework binaries were not modified or used as an authority for guessed private APIs. CAML acceptance is therefore BLOCKED pending Steph's scope waiver or better target declarations.
+The staged assets are checked in under `layout/var/mobile/Library/Application Support/PlampyCC/<theme>/Assets/...`; `ROOT_PATH_NS` supplies the rootless namespace at runtime. The source never embeds `/var/jb` or a second rootless prefix.
 
-Because constructing a package description requires the exact iOS 17 initializer, ownership semantics, and setter/call-site ABI, manufacturing a replacement object or guessing selectors would risk SpringBoard crashes and would not be faithful implementation. The package callbacks therefore deliberately preserve the original package unchanged. Static icon routing remains active and has an explicit original-glyph fallback. Animated CAML routing is an unresolved acceptance gate and remains pass-through. Steph must decide whether to waive it or provide verified declarations before implementation; no waiver is inferred here.
+Five runtime observations remain explicit and unclaimed, as listed by the verified ABI map:
 
-Next gate: obtain a bounded iOS 17 class-dump/selector map for the package-description producer and each target setter, then implement and runtime-test a retained `CCUICAPackageDescription` replacement against both themes. Do not claim animation parity from the shipped assets alone.
+1. The complete original package-name dictionary contents were not enumerated; the implementation uses only the reconstructed shipped-package map and fails open on misses.
+2. The concrete on-screen slider subclass is not confirmed; the `CCUIBaseSliderView` hook covers the verified superclass path.
+3. The exact base-class seam used by Flashlight, TVRemote, and other modules without per-module setter overrides remains unconfirmed.
+4. `stateUpdateHandlers` re-registration ordering when a live description is swapped remains unconfirmed.
+5. On-device AMFI/sandbox acceptance of loading the rooted theme bundle outside the app container remains unconfirmed.
+
+The unrelated `selectImage` preference action remains pending a Steph product decision; this CAML implementation does not waive or implement it. Steph must decide that feature separately.
+
+These observations require separately authorized device verification. This implementation does not claim runtime CAML success, animation parity, device installation, or SpringBoard stability.

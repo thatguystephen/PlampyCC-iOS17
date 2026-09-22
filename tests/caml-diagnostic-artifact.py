@@ -15,6 +15,8 @@ EXPECTED_LITERALS = (
     "CCUIBaseSliderView",
     "setGlyphPackageDescription:",
     "descriptionForPackageNamed:inBundle:",
+    "initWithPackageName:inBundle:",
+    "packageURL",
     "setGlyphState:",
     "button-package",
     "round-package",
@@ -22,6 +24,9 @@ EXPECTED_LITERALS = (
     "factory",
     "button-state",
     "slider-state",
+    "DisplayModule.bundle",
+    "MediaControls.framework",
+    "TimerModule.bundle",
     "unknown",
     "unknown-state",
     "unknown-class",
@@ -97,6 +102,7 @@ ORIGINAL_SLOT_NAMES = (
     "gOriginalFactory", "gOriginalButtonState", "gOriginalSliderState",
 )
 DESCRIPTOR_NAMES = ("BuildCAMLDiagnosticSites", "InstallCAMLDiagnosticSites")
+REPLACEMENT_BOUNDARY_NAMES = ("CAMLDiagnosticPrimitiveAdmission", "CAMLCreateReplacementDescription")
 
 
 def sha256(path: Path) -> str:
@@ -178,7 +184,7 @@ def uuid_of(binary: Path) -> str:
 
 def verify_symbol_companion(companion: Path) -> None:
     symbols = run(["nm", "-a", str(companion)])
-    required = HOOK_NAMES + ("CAMLDiagnosticPrimitiveAdmission",) + ORIGINAL_SLOT_NAMES + DESCRIPTOR_NAMES
+    required = HOOK_NAMES + REPLACEMENT_BOUNDARY_NAMES + ORIGINAL_SLOT_NAMES + DESCRIPTOR_NAMES
     missing = [name for name in required if name not in symbols]
     if missing:
         raise SystemExit(f"{companion}: exact unstripped map is incomplete: {', '.join(missing)}")
@@ -191,7 +197,7 @@ def verify_stripped_slice(binary: Path, companion: Path, architecture: str) -> N
     if uuid_of(binary) != uuid_of(companion):
         raise SystemExit(f"{binary}: UUID does not match its exact unstripped companion")
     symbols = run(["nm", "-arch", architecture, "-a", str(companion)])
-    required = HOOK_NAMES + ("CAMLDiagnosticPrimitiveAdmission",) + ORIGINAL_SLOT_NAMES + DESCRIPTOR_NAMES
+    required = HOOK_NAMES + REPLACEMENT_BOUNDARY_NAMES + ORIGINAL_SLOT_NAMES + DESCRIPTOR_NAMES
     addresses = symbol_addresses(symbols, required)
     missing = [name for name in required if name not in addresses]
     if missing:

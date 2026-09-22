@@ -13,6 +13,10 @@ IO = (ROOT / "src/CAMLDiagnosticIO.hpp").read_text()
 MAKEFILE = (ROOT / "Makefile").read_text()
 WORKFLOW = (ROOT / ".github/workflows/build-rootless.yml").read_text()
 DOC = (ROOT / "docs/CAML-DIAGNOSTIC-IMPLEMENTATION.md").read_text()
+REPLACEMENT = (ROOT / "src/CAMLReplacement.xm").read_text()
+REPLACEMENT_HEADER = (ROOT / "src/CAMLReplacement.h").read_text()
+REPLACEMENT_CORE = (ROOT / "src/CAMLReplacementCore.hpp").read_text()
+VERIFIED_ABI = (ROOT / "src/CAMLVerifiedABI.h").read_text()
 
 
 def fail(message: str) -> None:
@@ -49,9 +53,9 @@ assert_true("@try" not in HOOKS and "objc_msgSend" not in HOOKS and "respondsToS
 assert_true("CAMLDiagnosticPrimitiveAdmission(false)" in HOOKS and "CAMLDiagnosticPrimitiveAdmission(true)" in HOOKS, "hooks do not use primitive admission")
 
 hooks = {
-    "CAMLButtonPackageHook": ("ObservePackage(self, description, \"button-view\")", "gOriginalButtonPackage)(self, cmd, description)"),
-    "CAMLRoundPackageHook": ("ObservePackage(self, description, \"round-button\")", "gOriginalRoundPackage)(self, cmd, description)"),
-    "CAMLSliderPackageHook": ("ObservePackage(self, description, \"slider-view\")", "gOriginalSliderPackage)(self, cmd, description)"),
+    "CAMLButtonPackageHook": ("ObservePackage(self, description, \"button-view\")", "gOriginalButtonPackage)(self, cmd, argument)"),
+    "CAMLRoundPackageHook": ("ObservePackage(self, description, \"round-button\")", "gOriginalRoundPackage)(self, cmd, argument)"),
+    "CAMLSliderPackageHook": ("ObservePackage(self, description, \"slider-view\")", "gOriginalSliderPackage)(self, cmd, argument)"),
     "CAMLFactoryHook": ("ObserveFactory(packageName)", "gOriginalFactory)(self, cmd, packageName, bundle)"),
     "CAMLButtonStateHook": ("ObserveState(self, state, \"glyph-state\")", "gOriginalButtonState)(self, cmd, state)"),
     "CAMLSliderStateHook": ("ObserveState(self, state, \"glyph-state\")", "gOriginalSliderState)(self, cmd, state)"),
@@ -62,6 +66,51 @@ for name, (observer, original) in hooks.items():
     assert_true(body.count(original) == 1, f"{name} original call is not exactly once")
     assert_true(body.index(observer) < body.index(original), f"{name} does not preserve observe-before-pass-through ordering")
     assert_true("@" not in body, f"{name} uses Objective-C ownership/message syntax before the boundary")
+
+# The three package setters run the verified construct-and-pass route between
+# observation and the original call: the ARC-side factory returns a +1
+# replacement or nil (fail-open), the original receives argument = replacement
+# ?: description, and the +1 result is released exactly once after the
+# original invocation. The borrowed incoming description is never released.
+replacement_hooks = {
+    "CAMLButtonPackageHook": "CAMLCreateReplacementDescription(description, false)",
+    "CAMLRoundPackageHook": "CAMLCreateReplacementDescription(description, false)",
+    "CAMLSliderPackageHook": "CAMLCreateReplacementDescription(description, true)",
+}
+for name, factory_call in replacement_hooks.items():
+    body = function_body(HOOKS, name)
+    observer, original = hooks[name]
+    assert_true(body.count(factory_call) == 1, f"{name} does not call the CAML replacement factory exactly once")
+    assert_true(body.count("argument = replacement ? replacement : description") == 1, f"{name} does not select replacement-or-original exactly once")
+    assert_true(body.count("objc_release(replacement)") == 1, f"{name} does not release the +1 replacement exactly once")
+    assert_true("objc_release(description)" not in body, f"{name} releases the borrowed incoming description")
+    assert_true(body.index(observer) < body.index(factory_call) < body.index(original) < body.index("objc_release(replacement)"),
+                f"{name} does not preserve observe → replace → original → single-release ordering")
+for name in ("CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook"):
+    assert_true("CAMLCreateReplacementDescription" not in function_body(HOOKS, name),
+                f"{name} must not construct replacements")
+
+# The functional replacement boundary is ARC-owned, fail-open, and limited to
+# the machine-verified declarations in CAMLVerifiedABI.h.
+assert_true("ns_returns_retained" in REPLACEMENT_HEADER and "__unsafe_unretained id description" in REPLACEMENT_HEADER,
+            "replacement factory does not declare the +1 borrowed-argument boundary")
+assert_true("ns_returns_retained" in REPLACEMENT and "@try" in REPLACEMENT and "@catch (...)" in REPLACEMENT,
+            "replacement factory lacks the guarded fail-open boundary")
+assert_true(10 <= REPLACEMENT.count("return nil"), "replacement factory does not fail open on every miss")
+assert_true("initWithPackageName:name inBundle:bundle" in REPLACEMENT, "replacement factory does not use the verified initializer route")
+assert_true("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")" in REPLACEMENT,
+            "replacement factory does not use the rooted logical theme root")
+assert_true("CAMLVerifiedABI.h" in REPLACEMENT and "initWithPackageName:inBundle:" in VERIFIED_ABI
+            and "packageURL" in VERIFIED_ABI and "0x1d308a228" in VERIFIED_ABI,
+            "verified ABI declarations are missing or unreferenced")
+assert_true("/var/jb" not in REPLACEMENT + REPLACEMENT_CORE, "replacement sources embed a hand-written rootless prefix")
+assert_true("objc_msgSend" not in REPLACEMENT_CORE and "#import" not in REPLACEMENT_CORE,
+            "replacement core is not a pure policy header")
+for needle in ("BundleDirectoryForPackage", "\"timer\", \"TimerModule.bundle\"", "themeType == 1",
+               "\"DisplayModule.bundle\"", "\"MediaControls.framework\"", "HearingAidsModule.bundle"):
+    assert_true(needle in REPLACEMENT_CORE, f"replacement routing core omits {needle}")
+assert_true("CAMLReplacementCore.hpp" in (ROOT / "tests/native-caml-diagnostic.cpp").read_text(),
+            "native test does not exercise the production replacement routing core")
 
 assert_true("return gOriginalFactory ? ((id(*)(__unsafe_unretained id, SEL, __unsafe_unretained id, __unsafe_unretained id))gOriginalFactory)(self, cmd, packageName, bundle) : nil;" in HOOKS, "factory does not return the original result")
 for name in hooks:
