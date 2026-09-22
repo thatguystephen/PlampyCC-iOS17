@@ -702,7 +702,7 @@ static bool InstallSite(const CAMLDiagnosticSite *site) {
 }
 
 // POD descriptors are populated synchronously by the caller before the installer sees them.
-__attribute__((noinline, used)) static size_t BuildCAMLDiagnosticSites(CAMLDiagnosticSite *sites, size_t capacity) {
+extern "C" __attribute__((noinline, used)) size_t BuildCAMLDiagnosticSites(CAMLDiagnosticSite *sites, size_t capacity) {
     if (!sites || capacity < kDiagnosticSiteCount) return 0;
     sites[0] = { "CCUIButtonModuleView", "setGlyphPackageDescription:", "v24@0:8@16", "button-package", (IMP)CAMLButtonPackageHook, &gOriginalButtonPackage, false };
     sites[1] = { "CCUIRoundButton", "setGlyphPackageDescription:", "v24@0:8@16", "round-package", (IMP)CAMLRoundPackageHook, &gOriginalRoundPackage, false };
@@ -713,7 +713,7 @@ __attribute__((noinline, used)) static size_t BuildCAMLDiagnosticSites(CAMLDiagn
     return kDiagnosticSiteCount;
 }
 
-__attribute__((noinline, used)) static void InstallCAMLDiagnosticSites(CAMLDiagnosticSite *sites, size_t count) {
+extern "C" __attribute__((noinline, used)) void InstallCAMLDiagnosticSites(CAMLDiagnosticSite *sites, size_t count) {
     for (size_t index = 0; index < count; ++index) {
         bool succeeded = InstallSite(&sites[index]);
         RecordInstallStatus(&sites[index], succeeded);
