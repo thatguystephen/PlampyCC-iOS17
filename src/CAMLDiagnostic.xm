@@ -96,12 +96,12 @@ extern IMP gOriginalSliderPackage;
 extern IMP gOriginalFactory;
 extern IMP gOriginalButtonState;
 extern IMP gOriginalSliderState;
-extern void CAMLButtonPackageHook(id, SEL, id);
-extern void CAMLRoundPackageHook(id, SEL, id);
-extern void CAMLSliderPackageHook(id, SEL, id);
-extern id CAMLFactoryHook(id, SEL, id, id);
-extern void CAMLButtonStateHook(id, SEL, id);
-extern void CAMLSliderStateHook(id, SEL, id);
+extern "C" void CAMLButtonPackageHook(id, SEL, id);
+extern "C" void CAMLRoundPackageHook(id, SEL, id);
+extern "C" void CAMLSliderPackageHook(id, SEL, id);
+extern "C" id CAMLFactoryHook(id, SEL, id, id);
+extern "C" void CAMLButtonStateHook(id, SEL, id);
+extern "C" void CAMLSliderStateHook(id, SEL, id);
 
 static uint64_t DiagnosticMonotonicMilliseconds(void) {
     static mach_timebase_info_data_t timebase = {};
