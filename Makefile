@@ -10,7 +10,7 @@ PlampyCC_FILES = src/Tweak.xm src/CAMLDiagnostic.xm src/CAMLDiagnosticHooks.mm
 PlampyCC_CFLAGS = -fobjc-arc -std=c++17 -Werror=return-type
 # The hook ABI is a borrowed-argument boundary. Keep the six replacement IMPs
 # in a dedicated translation unit and make ARC failure a compile-time error.
-PlampyCC_CFLAGS_src/CAMLDiagnosticHooks.mm = -fno-objc-arc -std=c++17
+src/CAMLDiagnosticHooks.mm_CFLAGS = -fno-objc-arc -std=c++17
 PlampyCC_FRAMEWORKS = UIKit
 PlampyCC_PRIVATE_FRAMEWORKS = ControlCenterUI ControlCenterUIKit
 PlampyCC_LIBRARIES = substrate
