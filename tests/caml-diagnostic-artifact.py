@@ -166,6 +166,17 @@ def uuid_of(binary: Path) -> str:
     return match.group(1).lower()
 
 
+def verify_symbol_companion(companion: Path) -> None:
+    symbols = run(["nm", "-a", str(companion)])
+    required = HOOK_NAMES + ("CAMLDiagnosticPrimitiveAdmission",) + ORIGINAL_SLOT_NAMES + DESCRIPTOR_NAMES
+    missing = [name for name in required if name not in symbols]
+    if missing:
+        raise SystemExit(f"{companion}: exact unstripped map is incomplete: {', '.join(missing)}")
+    load_commands = run(["otool", "-l", str(companion)])
+    if "LC_UUID" not in load_commands:
+        raise SystemExit(f"{companion}: Mach-O UUID load command is absent")
+
+
 def verify_stripped_slice(binary: Path, companion: Path, architecture: str) -> None:
     if uuid_of(binary) != uuid_of(companion):
         raise SystemExit(f"{binary}: UUID does not match its exact unstripped companion")
@@ -269,7 +280,7 @@ def main() -> None:
         companion = args.artifact / "symbols" / architecture / "PlampyCC.dylib"
         if not companion.is_file() or companion.stat().st_size == 0:
             raise SystemExit(f"missing unstripped {architecture} diagnostic binary")
-        verify_slice(companion, require_symbols=True)
+        verify_symbol_companion(companion)
         companions[architecture] = companion
         pass_gate(number, f"{architecture} exact unstripped companion")
         pass_gate(number + 1, f"{architecture} companion descriptor and observer checks")
