@@ -16,9 +16,12 @@ A missing, stale, truncated, or partially hashed signature fails the build.
 Tool exit codes are never trusted as proof of validity.
 
 Run without arguments for the host-runnable fixture self test (synthetic thin
-and universal signed Mach-Os must validate; unsigned, tampered-code,
-tampered-hash, truncated-signature, and per-slice-tampered universal fixtures
-must be rejected). Run with --package <deb> to validate a real package.
+and universal signed Mach-Os with primary and bounded alternate CodeDirectories
+must validate; unsigned, tampered-code, tampered-hash, truncated-signature,
+per-slice-tampered and zero-slice universal fixtures, missing-primary,
+misindexed-primary, duplicate-directory, incompatible-directory, and
+out-of-range-alternate signatures must be rejected). Run with --package <deb>
+to validate a real package.
 """
 
 from __future__ import annotations
@@ -33,8 +36,23 @@ from typing import NoReturn
 
 CSMAGIC_EMBEDDED_SIGNATURE = 0xFADE0CC0
 CSMAGIC_CODEDIRECTORY = 0xFADE0C02
+# Slot identity is grounded in Apple's authoritative format definition, XNU
+# osfmk/kern/cs_blobs.h (apple-oss-distributions/xnu): CSSLOT_CODEDIRECTORY (0)
+# is "slot index for CodeDirectory" (the primary directory), and alternate
+# CodeDirectories are confined to the bounded range starting at
+# CSSLOT_ALTERNATE_CODEDIRECTORIES (0x1000) with CSSLOT_ALTERNATE_CODEDIRECTORY_MAX
+# = 5 slots, i.e. 0x1000..0x1004 ("one past the last" is
+# CSSLOT_ALTERNATE_CODEDIRECTORY_LIMIT = 0x1005). A CodeDirectory anywhere else
+# is not a directory entry, and a signature without a primary directory is
+# invalid. The signing source (ProcursusTeam/ldid ldid.cpp) only tests
+# `type == CSSLOT_CODEDIRECTORY || type >= CSSLOT_ALTERNATE` when re-verifying;
+# accepting every slot >= 0x1000 would also admit out-of-range slots and never
+# proves a primary directory exists, so this verifier enforces the bounded range
+# plus the primary-slot requirement instead.
 CSSLOT_CODEDIRECTORY = 0
 CSSLOT_ALTERNATE_CODEDIRECTORIES = 0x1000
+CSSLOT_ALTERNATE_CODEDIRECTORY_MAX = 5
+CSSLOT_ALTERNATE_CODEDIRECTORY_LIMIT = 0x1005
 CSSLOT_INFO_PLIST = 1
 LC_CODE_SIGNATURE = 0x1D
 FAT_MAGIC = 0xCAFEBABE
@@ -167,6 +185,19 @@ def verify_code_directory(
     return errors, (hash_type if not errors else None)
 
 
+def is_directory_slot(slot_type: int) -> bool:
+    """True for the primary CodeDirectory slot or a bounded alternate slot.
+
+    Grounded in XNU osfmk/kern/cs_blobs.h (see the slot constants above): the
+    primary CodeDirectory lives in CSSLOT_CODEDIRECTORY and alternates are
+    confined to 0x1000..0x1004 (CSSLOT_ALTERNATE_CODEDIRECTORIES up to, but not
+    including, CSSLOT_ALTERNATE_CODEDIRECTORY_LIMIT).
+    """
+    if slot_type == CSSLOT_CODEDIRECTORY:
+        return True
+    return CSSLOT_ALTERNATE_CODEDIRECTORIES <= slot_type < CSSLOT_ALTERNATE_CODEDIRECTORY_LIMIT
+
+
 def verify_signature_block(
     label: str, slice_bytes: bytes, dataoff: int, datasize: int
 ) -> list[str]:
@@ -188,22 +219,45 @@ def verify_signature_block(
             return [f"{label}: signature slot {slot_type:#x} has an out-of-bounds blob"]
         slots.append((slot_type, offset, blob_length))
     errors: list[str] = []
-    valid_directories = 0
+    directory_slots_seen: set[int] = set()
+    primary_directory_valid = False
     valid_sha256_directories = 0
     for slot_type, offset, blob_length in slots:
         blob_magic = struct.unpack_from(">I", block, offset)[0]
-        if blob_magic != CSMAGIC_CODEDIRECTORY:
+        directory_slot = is_directory_slot(slot_type)
+        directory_blob = blob_magic == CSMAGIC_CODEDIRECTORY
+        if directory_blob and not directory_slot:
+            errors.append(
+                f"{label}: CodeDirectory occupies slot {slot_type:#x}, "
+                f"which is not a designated CodeDirectory slot"
+            )
             continue
+        if directory_slot and not directory_blob:
+            errors.append(
+                f"{label}: CodeDirectory slot {slot_type:#x} holds a non-CodeDirectory blob"
+            )
+            continue
+        if not directory_blob:
+            continue
+        if slot_type in directory_slots_seen:
+            errors.append(f"{label}: duplicate CodeDirectory entry for slot {slot_type:#x}")
+            continue
+        directory_slots_seen.add(slot_type)
         slot_errors, valid_type = verify_code_directory(
             label, block, offset, blob_length, slice_bytes, dataoff, slots
         )
         errors.extend(slot_errors)
         if valid_type is not None:
-            valid_directories += 1
+            if slot_type == CSSLOT_CODEDIRECTORY:
+                primary_directory_valid = True
             if valid_type == 2:
                 valid_sha256_directories += 1
-    if valid_directories == 0 and not errors:
-        errors.append(f"{label}: signature contains no CodeDirectory")
+    if CSSLOT_CODEDIRECTORY not in directory_slots_seen:
+        errors.append(
+            f"{label}: primary CodeDirectory is missing from slot {CSSLOT_CODEDIRECTORY}"
+        )
+    elif not primary_directory_valid:
+        errors.append(f"{label}: primary CodeDirectory failed validation")
     if valid_sha256_directories == 0 and not errors:
         errors.append(f"{label}: no valid SHA-256 CodeDirectory")
     return errors
@@ -243,8 +297,14 @@ def verify_macho(data: bytes, label: str) -> list[str]:
     """Return a list of signature-validity errors for one (possibly fat) Mach-O."""
     if not is_macho(data):
         return [f"{label}: not a Mach-O"]
+    slices = macho_slices(data, label)
+    if not slices:
+        # Only a fat container can declare zero architecture slices
+        # (macho_slices parses fat count == 0 as no slices); that is a
+        # malformed container, not an empty but valid binary.
+        return [f"{label}: universal container declares zero architecture slices"]
     errors: list[str] = []
-    for slice_label, slice_bytes, _cputype, _cpusubtype in macho_slices(data, label):
+    for slice_label, slice_bytes, _cputype, _cpusubtype in slices:
         errors.extend(verify_slice(slice_label, slice_bytes))
     return errors
 
@@ -365,25 +425,43 @@ def _build_code(target: int, dataoff: int, datasize: int) -> bytes:
     return bytes(code)
 
 
-def _build_signature(code: bytes, with_special: bool, hash_types: tuple[int, ...], dataoff: int) -> bytes:
+def _directory_slots(hash_types: tuple[int, ...]) -> tuple[tuple[int, int], ...]:
+    """Lay hash types out over the primary slot, then the bounded alternate slots."""
+    return tuple(
+        (
+            CSSLOT_CODEDIRECTORY if index == 0 else CSSLOT_ALTERNATE_CODEDIRECTORIES + index - 1,
+            hash_type,
+        )
+        for index, hash_type in enumerate(hash_types)
+    )
+
+
+def _build_signature(
+    code: bytes, with_special: bool, directory_slots: tuple[tuple[int, int], ...]
+) -> bytes:
     special = _special_blob() if with_special else None
     entries: list[tuple[int, bytes]] = []
-    for index, hash_type in enumerate(hash_types):
-        slot = CSSLOT_CODEDIRECTORY if index == 0 else CSSLOT_ALTERNATE_CODEDIRECTORIES + index - 1
+    for slot, hash_type in directory_slots:
         entries.append((slot, _build_code_directory(code, hash_type, special)))
     if special is not None:
         entries.append((CSSLOT_INFO_PLIST, special))
     return _superblob(entries)
 
 
-def _signed_fixture(with_special: bool, hash_types: tuple[int, ...]) -> bytes:
+def _signed_fixture_slots(
+    with_special: bool, directory_slots: tuple[tuple[int, int], ...]
+) -> bytes:
     target = PAGE + 104  # one full code page plus a partial page
-    signature_size = len(_build_signature(bytes(target), with_special, hash_types, target))
+    signature_size = len(_build_signature(bytes(target), with_special, directory_slots))
     code = _build_code(target, target, signature_size)
-    signature = _build_signature(code, with_special, hash_types, target)
+    signature = _build_signature(code, with_special, directory_slots)
     if len(signature) != signature_size:
         fail("fixture builder produced an inconsistent signature size")
     return code + signature
+
+
+def _signed_fixture(with_special: bool, hash_types: tuple[int, ...]) -> bytes:
+    return _signed_fixture_slots(with_special, _directory_slots(hash_types))
 
 
 def _unsigned_fixture() -> bytes:
@@ -405,6 +483,10 @@ def _fat_fixture() -> bytes:
         body += blob + b"\x00" * (padded - len(blob))
         cursor += padded
     return header + entries + b"\x00" * (PAGE - header_size) + body
+
+
+def _zero_arch_fat_fixture() -> bytes:
+    return struct.pack(">II", FAT_MAGIC, 0) + b"\x00" * 64
 
 
 def expect_valid(label: str, data: bytes) -> None:
@@ -445,13 +527,98 @@ def self_test() -> None:
     if not errors or not any("[0]" in error and "hash mismatch" in error for error in errors):
         fail(f"self test universal tampered: expected slice [0] hash mismatch, got {errors}")
 
+    # Slot identity (SIGN-R1): a valid primary CodeDirectory must sit at
+    # CSSLOT_CODEDIRECTORY, alternates only inside the bounded alternate range,
+    # and directory entries must be unique and hold CodeDirectory blobs.
+    expect_valid(
+        "primary with the full bounded alternate range",
+        _signed_fixture(False, (2, 1, 3, 2, 1, 3)),
+    )
+
+    expect_invalid(
+        "missing primary CodeDirectory",
+        _signed_fixture_slots(False, ((CSSLOT_ALTERNATE_CODEDIRECTORIES, 2),)),
+        "primary CodeDirectory is missing",
+    )
+
+    # The SIGN-R1 review probe: a valid single-directory fixture with its first
+    # superblob index type changed from 0 to 0x1234. The signature-index bytes
+    # lie outside the code hash coverage, so every hash still matches and only
+    # slot-identity validation can reject the signature.
+    misindexed = bytearray(_signed_fixture(False, (2,)))
+    struct.pack_into(">I", misindexed, PAGE + 104 + 12, 0x1234)
+    expect_invalid(
+        "misindexed primary CodeDirectory",
+        bytes(misindexed),
+        "not a designated CodeDirectory slot",
+    )
+    expect_invalid(
+        "misindexed signature loses the primary CodeDirectory",
+        bytes(misindexed),
+        "primary CodeDirectory is missing",
+    )
+
+    # An alternate directory just past the documented bounded alternate range
+    # must be rejected even though the primary directory is intact.
+    out_of_range = bytearray(_signed_fixture(False, (2, 1)))
+    struct.pack_into(">I", out_of_range, PAGE + 104 + 20, CSSLOT_ALTERNATE_CODEDIRECTORY_LIMIT)
+    expect_invalid(
+        "alternate CodeDirectory past the bounded alternate range",
+        bytes(out_of_range),
+        "slot 0x1005",
+    )
+
+    expect_invalid(
+        "duplicate primary CodeDirectory entry",
+        _signed_fixture_slots(False, ((CSSLOT_CODEDIRECTORY, 2), (CSSLOT_CODEDIRECTORY, 1))),
+        "duplicate CodeDirectory entry for slot 0x0",
+    )
+    expect_invalid(
+        "duplicate alternate CodeDirectory entry",
+        _signed_fixture_slots(
+            False,
+            (
+                (CSSLOT_CODEDIRECTORY, 2),
+                (CSSLOT_ALTERNATE_CODEDIRECTORIES, 1),
+                (CSSLOT_ALTERNATE_CODEDIRECTORIES, 3),
+            ),
+        ),
+        "duplicate CodeDirectory entry for slot 0x1000",
+    )
+
+    incompatible = bytearray(_signed_fixture(True, (2, 1)))
+    struct.pack_into(">I", incompatible, PAGE + 104 + 28, CSSLOT_ALTERNATE_CODEDIRECTORIES + 3)
+    expect_invalid(
+        "non-CodeDirectory blob in a CodeDirectory slot",
+        bytes(incompatible),
+        "holds a non-CodeDirectory blob",
+    )
+
+    # An invalid primary directory must not be rescued by a valid alternate:
+    # corrupt only the primary directory's first stored code-page hash.
+    weak_primary = bytearray(_signed_fixture(False, (2, 1)))
+    primary_offset = struct.unpack_from(">I", weak_primary, PAGE + 104 + 16)[0]
+    primary_hash_offset = struct.unpack_from(">I", weak_primary, PAGE + 104 + primary_offset + 16)[0]
+    weak_primary[PAGE + 104 + primary_offset + primary_hash_offset] ^= 0xFF
+    expect_invalid(
+        "invalid primary CodeDirectory with a valid alternate",
+        bytes(weak_primary),
+        "primary CodeDirectory failed validation",
+    )
+
+    expect_invalid(
+        "zero-architecture universal fixture",
+        _zero_arch_fat_fixture(),
+        "zero architecture slices",
+    )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Final packaged Mach-O signature contract")
     parser.add_argument("--package", type=Path, action="append", default=[])
     args = parser.parse_args()
     self_test()
-    print("PASS: signature-contract fixtures (valid thin/universal signatures accepted; unsigned, stale, tampered-code, tampered-hash, and truncated signatures rejected)")
+    print("PASS: signature-contract fixtures (valid thin/universal signatures with primary and bounded alternate CodeDirectories accepted; unsigned, stale, tampered-code, tampered-hash, truncated, zero-slice, missing-primary, misindexed-primary, duplicate-directory, incompatible-directory, and out-of-range-alternate signatures rejected)")
     for package in args.package:
         verify_package(package)
         print(f"PASS: final packaged code signatures in {package}")
