@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import io
-import lzma
 import re
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
+
+_SIGNATURE_SPEC = importlib.util.spec_from_file_location(
+    "signature_contract", Path(__file__).resolve().parent / "signature-contract.py"
+)
+assert _SIGNATURE_SPEC is not None and _SIGNATURE_SPEC.loader is not None
+signature_contract = importlib.util.module_from_spec(_SIGNATURE_SPEC)
+_SIGNATURE_SPEC.loader.exec_module(signature_contract)
 
 EXPECTED_LITERALS = (
     "CCUIButtonModuleView",
@@ -297,21 +304,30 @@ def ar_members(archive: bytes) -> dict[str, bytes]:
     return members
 
 
-def extract_packaged_dylib(package: Path, destination: Path) -> None:
+def extract_packaged_binaries(package: Path, destination: Path) -> dict[str, Path]:
     members = ar_members(package.read_bytes())
     data_name = next((name for name in members if name.startswith("data.tar")), None)
     if data_name is None:
         raise SystemExit(f"{package}: data member is absent")
-    compressed = members[data_name]
-    payload = lzma.decompress(compressed) if data_name.endswith((".xz", ".lzma")) else compressed
-    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
-        candidate = next((member for member in archive.getmembers() if member.name.endswith("/PlampyCC.dylib")), None)
-        if candidate is None:
-            raise SystemExit(f"{package}: packaged tweak dylib is absent")
-        extracted = archive.extractfile(candidate)
-        if extracted is None:
-            raise SystemExit(f"{package}: packaged tweak dylib cannot be extracted")
-        destination.write_bytes(extracted.read())
+    payload = members[data_name]
+    extracted: dict[str, Path] = {}
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+        for member in archive.getmembers():
+            if not member.isfile():
+                continue
+            handle = archive.extractfile(member)
+            if handle is None:
+                continue
+            blob = handle.read()
+            if not signature_contract.is_macho(blob):
+                continue
+            leaf = Path(member.name).name
+            if leaf in extracted:
+                raise SystemExit(f"{package}: packaged binary name {leaf} is ambiguous")
+            target = destination / leaf
+            target.write_bytes(blob)
+            extracted[leaf] = target
+    return extracted
 
 
 def main() -> None:
@@ -336,9 +352,16 @@ def main() -> None:
     pass_gate(6, "single rootless package")
     with tempfile.TemporaryDirectory(prefix="caml-artifact-") as scratch:
         scratch_path = Path(scratch)
-        universal = scratch_path / "PlampyCC.dylib"
-        extract_packaged_dylib(packages[0], universal)
-        pass_gate(7, "extract packaged dylib")
+        extracted = extract_packaged_binaries(packages[0], scratch_path)
+        for leaf in ("PlampyCC.dylib", "PlampyCC"):
+            if leaf not in extracted:
+                raise SystemExit(f"{packages[0]}: packaged binary {leaf} is absent")
+        for leaf, path in sorted(extracted.items()):
+            errors = signature_contract.verify_macho(path.read_bytes(), f"{packages[0]}:{leaf}")
+            if errors:
+                raise SystemExit("final packaged signature check failed: " + "; ".join(errors))
+        universal = extracted["PlampyCC.dylib"]
+        pass_gate(7, "extract packaged binaries and verify final code signatures")
         for number, architecture in ((8, "arm64"), (10, "arm64e")):
             companion = companions[architecture]
             thin = scratch_path / f"PlampyCC-{architecture}.dylib"
@@ -349,7 +372,7 @@ def main() -> None:
             pass_gate(number + 1, f"{architecture} final package literals and legacy-initializer gate")
     verify_checksums(args.artifact)
     pass_gate(12, "all declared artifact checksums")
-    print("PASS: 12 package gates/checksum checks; exact UUID-matched stripped arm64/arm64e hook boundaries verified")
+    print("PASS: 12 package gates/checksum checks; exact UUID-matched stripped arm64/arm64e hook boundaries verified; final packaged code signatures verified")
 
 
 if __name__ == "__main__":

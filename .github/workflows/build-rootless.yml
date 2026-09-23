@@ -49,6 +49,9 @@ jobs:
           grep -F 'rsync -a "$(THEOS_LAYOUT_DIR_NAME)/" "$(THEOS_STAGING_DIR)"' "$THEOS/makefiles/stage.mk"
           grep -F '$(shell mv $(i) $(_THEOS_SCHEME_STAGE))' "$THEOS/makefiles/package/deb.mk"
           grep -F 'TARGET_STRIP = :' "$THEOS/makefiles/common.mk"
+          grep -F 'TARGET_CODESIGN = ldid' "$THEOS/makefiles/targets/_common/darwin_head.mk"
+          grep -F 'TARGET_CODESIGN_FLAGS ?= -S' "$THEOS/makefiles/targets/_common/darwin_head.mk"
+          grep -F '_THEOS_CODESIGN_COMMANDLINE = CODESIGN_ALLOCATE=$(TARGET_CODESIGN_ALLOCATE) $(ECHO_UNBUFFERED) $(TARGET_CODESIGN)' "$THEOS/makefiles/instance/rules.mk"
           curl --fail --location --retry 3 -o "$RUNNER_TEMP/$SDK_NAME.tar.xz" "https://github.com/theos/sdks/releases/download/master-146e41f/$SDK_NAME.tar.xz"
           printf '%s  %s\n' "$SDK_SHA256" "$RUNNER_TEMP/$SDK_NAME.tar.xz" | shasum -a 256 -c -
           mkdir -p "$THEOS/sdks" && tar -xJf "$RUNNER_TEMP/$SDK_NAME.tar.xz" -C "$THEOS/sdks"
@@ -58,6 +61,7 @@ jobs:
           set -euo pipefail
           python3 -B tests/caml-diagnostic-contract.py
           bun tests/static-check.ts
+          python3 -B tests/signature-contract.py
           # Build the exact release binary once without stripping. The package is
           # then copied, stripped in place, and repacked so UUIDs and function
           # starts remain identical between each companion and final slice.
@@ -91,9 +95,38 @@ jobs:
             done
             strip -x "$source_binary"
           done
+          # strip -x above invalidates the build-time signature (the pinned
+          # Theos signs every linked binary with ldid -S through
+          # _THEOS_CODESIGN_COMMANDLINE). Re-sign every final staged Mach-O
+          # with the exact pinned signing step after stripping and before
+          # dpkg-deb -b; nothing may mutate these bytes afterwards.
+          : > "$RUNNER_TEMP/plampycc-signed.txt"
+          while IFS= read -r staged_file; do
+            if file -b "$staged_file" | grep -q 'Mach-O'; then
+              ldid -S "$staged_file"
+              printf '%s\n' "$staged_file" >> "$RUNNER_TEMP/plampycc-signed.txt"
+            fi
+          done < <(find "$RUNNER_TEMP/plampycc-package" -type f | sort)
+          test -s "$RUNNER_TEMP/plampycc-signed.txt"
           test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 4
           dpkg-deb -b "$RUNNER_TEMP/plampycc-package" "dist/packages/$(basename "$source_package")"
           test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1
+          # Final-signature gate: every packaged Mach-O must still be the exact
+          # byte sequence signed above (no post-sign mutation) and must carry a
+          # hash-valid code signature over its final stripped content.
+          rm -rf "$RUNNER_TEMP/plampycc-verify"
+          mkdir -p "$RUNNER_TEMP/plampycc-verify"
+          dpkg-deb -R "dist/packages/$(basename "$source_package")" "$RUNNER_TEMP/plampycc-verify"
+          python3 -B tests/signature-contract.py --package "dist/packages/$(basename "$source_package")"
+          verified_signatures=0
+          while IFS= read -r packaged_file; do
+            if file -b "$packaged_file" | grep -q 'Mach-O'; then
+              relative="${packaged_file#"$RUNNER_TEMP/plampycc-verify"}"
+              cmp "$packaged_file" "$RUNNER_TEMP/plampycc-package$relative"
+              verified_signatures=$((verified_signatures + 1))
+            fi
+          done < <(find "$RUNNER_TEMP/plampycc-verify" -type f | sort)
+          test "$verified_signatures" -eq "$(wc -l < "$RUNNER_TEMP/plampycc-signed.txt" | tr -d ' ')"
           git rev-parse HEAD > dist/source-commit.txt
           xcodebuild -version > dist/xcode-version.txt
           {

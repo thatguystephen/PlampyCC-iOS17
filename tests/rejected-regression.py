@@ -37,6 +37,14 @@ def violations(commit: str | None) -> list[str]:
     )
     if not has_exact_release_companion:
         failures.append("pre-strip symbol collection")
+    resign_index = workflow.find("ldid -S \"$staged_file\"")
+    post_strip_re_sign = (
+        "python3 -B tests/signature-contract.py" in workflow
+        and resign_index > workflow.find("strip -x \"$source_binary\"") >= 0
+        and 0 <= resign_index < workflow.find("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\"")
+    )
+    if not post_strip_re_sign:
+        failures.append("post-strip re-sign before packing")
     if "ReconcileGlyphView" not in source:
         failures.append("live glyph reconciliation")
     if "plampy.originalGlyph" in source:

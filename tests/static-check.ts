@@ -55,6 +55,11 @@ assert(workflow.includes("make clean package FINALPACKAGE=1 STRIP=0"), "workflow
 assert(workflow.includes("dpkg-deb -R \"$source_package\"") && workflow.includes("source_dylib=") && workflow.includes("source_preferences=") && workflow.includes("cp \"$symbol_binary\" \"dist/symbols/$arch/$target\""), "workflow does not collect exact UUID companions");
 assert(workflow.includes("strip -x \"$source_binary\"") && workflow.includes("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\""), "workflow does not strip and repack the exact release binary");
 assert(workflow.includes("SHA256SUMS") && workflow.includes("tests/caml-diagnostic-artifact.py dist"), "workflow does not emit and verify artifact checksums");
+assert(workflow.includes("TARGET_CODESIGN = ldid") && workflow.includes("TARGET_CODESIGN_FLAGS ?= -S"), "workflow does not verify the pinned Theos signing step");
+assert(workflow.includes("ldid -S \"$staged_file\"") && workflow.includes("tests/signature-contract.py --package"), "final packaged Mach-Os are not re-signed and signature-verified after stripping");
+assert(workflow.indexOf("strip -x \"$source_binary\"") < workflow.indexOf("ldid -S \"$staged_file\"") && workflow.indexOf("ldid -S \"$staged_file\"") < workflow.indexOf("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\""), "post-strip re-sign does not precede repacking");
+assert(workflow.includes("cmp \"$packaged_file\" \"$RUNNER_TEMP/plampycc-package$relative\""), "packaged bytes are not proven unchanged since signing");
+assert(provenance.includes("ldid -S"), "provenance does not record the pinned signing step");
 
 for (const path of [
   "PlampyCC.plist",
@@ -236,4 +241,4 @@ assert(nativeTest.includes("weak-lifetime") && nativeTest.includes("not executed
 
 for (const field of ["target_names", "exactly one package is required", "symbols must contain tweak and preferences targets", "unstrippedBinaries", "sha256"]) assert(emitter.includes(field), `manifest producer contract missing ${field}`);
 
-console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, production-delegated package recovery transitions (identity/original preservation) exercised natively across all three setter seams with honest weak-lifetime limits, rootless staging/strip contract, and producer/consumer manifest coverage");
+console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, production-delegated package recovery transitions (identity/original preservation) exercised natively across all three setter seams with honest weak-lifetime limits, rootless staging/strip contract, post-strip ldid -S re-sign with final-signature and no-mutation assertions, and producer/consumer manifest coverage");

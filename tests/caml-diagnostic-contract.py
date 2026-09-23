@@ -265,6 +265,34 @@ assert_true("dpkg-deb -R" in WORKFLOW and "dpkg-deb -b" in WORKFLOW and "SHA256S
 assert_true("pass_gate(12" in (ROOT / "tests/caml-diagnostic-artifact.py").read_text(), "twelve artifact gates are not declared")
 for phrase in ("Hook list", "kDiagnosticEnabled", "events.jsonl", "build ID", "device-test gate", "install-once"):
     assert_true(phrase in DOC, f"implementation document omits {phrase}")
+
+# Post-strip signing contract: strip -x invalidates the build-time ldid -S
+# signature (the pinned Theos signs every linked binary through
+# _THEOS_CODESIGN_COMMANDLINE), so every final staged Mach-O must be re-signed
+# after stripping and before dpkg-deb -b, the shipped bytes must be proven
+# unchanged since signing, and the final signatures must be verified from
+# CodeDirectory hash coverage rather than tool exit codes.
+strip_index = WORKFLOW.index("strip -x \"$source_binary\"")
+resign_index = WORKFLOW.index("ldid -S \"$staged_file\"")
+pack_index = WORKFLOW.index("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\"")
+assert_true(strip_index < resign_index < pack_index,
+            "final packaged Mach-Os are not re-signed after stripping and before packing")
+assert_true("python3 -B tests/signature-contract.py" in WORKFLOW
+            and "tests/signature-contract.py --package" in WORKFLOW,
+            "signature self-test/package assertion is not wired into CI")
+assert_true("cmp \"$packaged_file\" \"$RUNNER_TEMP/plampycc-package$relative\"" in WORKFLOW,
+            "packaged bytes are not proven unchanged since signing")
+assert_true("TARGET_CODESIGN_FLAGS ?= -S" in WORKFLOW and "TARGET_CODESIGN = ldid" in WORKFLOW,
+            "workflow does not verify the pinned Theos signing step")
+artifact_text = (ROOT / "tests/caml-diagnostic-artifact.py").read_text()
+assert_true("signature_contract" in artifact_text and "extract_packaged_binaries" in artifact_text,
+            "artifact gates do not verify the final packaged signatures")
+signature_text = (ROOT / "tests/signature-contract.py").read_text()
+assert_true("LC_CODE_SIGNATURE" in signature_text and "CodeDirectory" in signature_text
+            and "hash mismatch" in signature_text and "self_test" in signature_text,
+            "final-signature assertion is not a CodeDirectory hash-coverage check with fixtures")
+assert_true("ldid -S" in DOC and "ldid -S" in (ROOT / "PROVENANCE.md").read_text(),
+            "the pinned signing step is not documented")
 assert_true("dispatch_sync" not in SOURCE and "dispatch_async" not in SOURCE, "diagnostic introduced queue dispatch")
 
-print("PASS: redesigned non-ARC hook shim, guarded observer boundary, shared native policies, injected syscall adapter, atomic fault state, and rootless verification contract")
+print("PASS: redesigned non-ARC hook shim, guarded observer boundary, shared native policies, injected syscall adapter, atomic fault state, rootless verification contract, and post-strip ldid -S re-sign with final-signature and no-mutation assertions")
