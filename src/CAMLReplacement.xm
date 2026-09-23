@@ -153,7 +153,7 @@ extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
 
 // ---- install record (called by the shim after the original setter invocation) ----
 
-void CAMLRecordPackageInstall(__unsafe_unretained id consumer,
+extern "C" void CAMLRecordPackageInstall(__unsafe_unretained id consumer,
                               __unsafe_unretained id stockDescription,
                               __unsafe_unretained id installedDescription,
                               bool installedOwned, int seam) {
@@ -254,7 +254,7 @@ static void ReconcilePackageConsumer(__unsafe_unretained id consumer) {
     }
 }
 
-void CAMLReconcilePackageConsumers(void) {
+extern "C" void CAMLReconcilePackageConsumers(void) {
     if (![NSThread isMainThread]) {
         dispatch_async(dispatch_get_main_queue(), ^{ CAMLReconcilePackageConsumers(); });
         return;

@@ -90,12 +90,12 @@ static unsigned char gRetentionBuffer[kDiagnosticRetentionBytes];
 
 static bool SerializeEvent(CAMLDiagnosticEvent *event);
 
-extern IMP gOriginalButtonPackage;
-extern IMP gOriginalRoundPackage;
-extern IMP gOriginalSliderPackage;
-extern IMP gOriginalFactory;
-extern IMP gOriginalButtonState;
-extern IMP gOriginalSliderState;
+extern "C" IMP gOriginalButtonPackage;
+extern "C" IMP gOriginalRoundPackage;
+extern "C" IMP gOriginalSliderPackage;
+extern "C" IMP gOriginalFactory;
+extern "C" IMP gOriginalButtonState;
+extern "C" IMP gOriginalSliderState;
 extern "C" void CAMLButtonPackageHook(id, SEL, id);
 extern "C" void CAMLRoundPackageHook(id, SEL, id);
 extern "C" void CAMLSliderPackageHook(id, SEL, id);

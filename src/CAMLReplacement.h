@@ -22,6 +22,14 @@
 //   afterwards even when the record hop defers to the main thread.
 #ifdef __OBJC__
 
+// C linkage on every boundary entry point: the definitions in
+// src/CAMLReplacement.xm and src/CAMLDiagnosticHooks.mm are declared
+// `extern "C"`, and a C++-linkage declaration followed by an `extern "C"`
+// definition is an ill-formed conflicting-language-linkage error.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // +1 replacement or nil. `consumer` must support the verified
 // glyphPackageDescription recovery read-back; otherwise this fails open so an
 // unrecoverable override is never installed. `description` is the borrowed
@@ -59,6 +67,10 @@ void CAMLInvokeOriginalPackage(int seam, __unsafe_unretained id consumer,
 // Shim-side MRR release of the factory's +1 result. Exactly one call site per
 // package hook, after the original invocation and after CAMLRecordPackageInstall.
 void CAMLReleaseReplacement(__unsafe_unretained id replacement);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __OBJC__ */
 #endif /* PLAMPYCC_CAML_REPLACEMENT_H */

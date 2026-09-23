@@ -22,12 +22,17 @@
 #error "must be compiled with ARC disabled"
 #endif
 
-extern "C" IMP gOriginalButtonPackage;
-extern "C" IMP gOriginalRoundPackage;
-extern "C" IMP gOriginalSliderPackage;
-extern "C" IMP gOriginalFactory;
-extern "C" IMP gOriginalButtonState;
-extern "C" IMP gOriginalSliderState;
+// Original-IMP slots written by the diagnostic installer (the descriptor table
+// in src/CAMLDiagnostic.xm passes &gOriginal*). C linkage matches that
+// translation unit's `extern "C"` declarations; these ARE the definitions.
+extern "C" {
+IMP gOriginalButtonPackage = NULL;
+IMP gOriginalRoundPackage = NULL;
+IMP gOriginalSliderPackage = NULL;
+IMP gOriginalFactory = NULL;
+IMP gOriginalButtonState = NULL;
+IMP gOriginalSliderState = NULL;
+}
 
 extern "C" void ObservePackage(__unsafe_unretained id view, __unsafe_unretained id description, const char *site);
 extern "C" void ObserveState(__unsafe_unretained id view, __unsafe_unretained id state, const char *site);
