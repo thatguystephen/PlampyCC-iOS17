@@ -390,7 +390,10 @@ static void TestPackageRecoveryTransitions() {
             ReconcilePlan plan = h.Reconcile(false, nullptr); // disable
             assert(plan.action == ReconcileAction::RestoreStock);
             assert(plan.seam == seam && plan.perform && plan.invoke == H(&S1));
-            assert(plan.clear && h.installed == H(&S1));
+            // SP1-R3: restoration preserves the stock recovery record
+            // (original, nil) instead of clearing it.
+            assert(!plan.clear && h.installed == H(&S1));
+            assert(h.state.original == H(&S1) && h.state.applied == nullptr);
         }
         // SP1-R1 regression: a reconstruction miss on an owned re-assignment
         // must not drop ownership — disable still restores the real stock.
@@ -456,8 +459,9 @@ static void TestPackageRecoveryTransitions() {
             assert(plan.action == ReconcileAction::ApplyReplacement && plan.invoke == H(&T1));
             assert(h.state.original == H(&S1) && h.state.applied == H(&T1));
         }
-        // Disable restores the preserved stock and clears ownership; re-enable
-        // re-themes the restored stock under its own identity again.
+        // Disable restores the preserved stock, drops ownership, and keeps the
+        // stock record; re-enable re-themes the restored stock under its own
+        // identity again.
         {
             FakeConsumer h; h.seam = seam;
             h.Install(H(&S1), H(&T1));
@@ -466,6 +470,48 @@ static void TestPackageRecoveryTransitions() {
             plan = h.Reconcile(true, H(&T2));
             assert(plan.action == ReconcileAction::ApplyReplacement && plan.invoke == H(&T2));
             assert(h.state.original == H(&S1) && h.state.applied == H(&T2));
+        }
+        // SP1-R3 regression: restore -> stale owned re-assignment -> DISABLED
+        // reconcile. Restoration preserved the stock record, so the stale
+        // owned pass-through re-records against the preserved stock and the
+        // next disabled reconcile restores the real original S again — a
+        // themed description can never remain installed while the tweak is
+        // disabled when the stock was known.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1)); // (S1, T1, 0)
+            ReconcilePlan plan = h.Reconcile(false, nullptr); // disable: restore S1
+            assert(plan.action == ReconcileAction::RestoreStock && plan.perform);
+            assert(plan.invoke == H(&S1) && h.installed == H(&S1)); // S identity
+            assert(!plan.clear && h.state.original == H(&S1) && h.state.applied == nullptr);
+            // While still disabled, the retained owned T1 is re-assigned
+            // through the seam: the factory misses (disabled), T1 passes
+            // through, and recording must keep the preserved stock.
+            assert(h.Install(H(&T1), nullptr) == H(&T1));
+            assert(h.state.original == H(&S1)); // preserved stock — never nullptr
+            assert(h.state.applied == H(&T1));  // ownership survives the miss
+            plan = h.Reconcile(false, nullptr); // disabled reconcile
+            assert(plan.action == ReconcileAction::RestoreStock && plan.perform);
+            assert(plan.invoke == H(&S1) && h.installed == H(&S1)); // S identity
+            assert(!plan.clear && h.state.original == H(&S1) && h.state.applied == nullptr);
+        }
+        // SP1-R3 regression: restore -> stale owned re-assignment -> RE-ENABLE.
+        // Re-enabling rebuilds from the preserved stock original (never from
+        // the stale owned replacement) and restores S identity in the record.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1));
+            ReconcilePlan plan = h.Reconcile(false, nullptr); // disable: restore S1
+            assert(plan.invoke == H(&S1) && h.installed == H(&S1));
+            assert(h.Install(H(&T1), nullptr) == H(&T1)); // stale owned re-assign
+            assert(h.state.original == H(&S1) && h.state.applied == H(&T1));
+            ConstructionPlan build =
+                PlanConstruction(h.state, h.hasState, H(&T1), h.theme, FakeEqual, FakeOwned);
+            assert(!build.keepOwned && build.source == H(&S1)); // rebuild from S1
+            plan = h.Reconcile(true, H(&U1)); // re-enable
+            assert(plan.action == ReconcileAction::ApplyReplacement && plan.perform);
+            assert(plan.invoke == H(&U1));
+            assert(h.state.original == H(&S1) && h.state.applied == H(&U1));
         }
         // A stale owned replacement re-assigned later (marker-owned, record
         // already on another replacement or gone) is never "genuinely newer
@@ -485,8 +531,10 @@ static void TestPackageRecoveryTransitions() {
             assert(g.state.original == nullptr); // fail open: no stock is known
             assert(g.state.applied == H(&T1));   // ownership not silently dropped
             ReconcilePlan p2 = g.Reconcile(false, nullptr);
-            // Owned with unknown original: fail open, keep installed, and never
-            // "restore" a themed description as stock.
+            // Owned with unknown original (the stock was never known here —
+            // the post-restore variant keeps its record, see the SP1-R3
+            // blocks above): fail open, keep installed, and never "restore" a
+            // themed description as stock.
             assert(p2.action == ReconcileAction::KeepInstalled && !p2.perform);
             assert(g.installed == H(&T1) && g.state.applied == H(&T1));
         }

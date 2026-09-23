@@ -176,6 +176,10 @@ assert_true("SameDescription" in REPLACEMENT and "ClassifyInstall" in REPLACEMEN
             "reconcile does not run the production classification and decision policy")
 assert_true("kind == IncomingKind::NewStock" in REPLACEMENT_CORE and "input.prior.original" in REPLACEMENT_CORE,
             "recording does not limit stock adoption to genuinely newer stock")
+assert_true("RecoveryState{base.original, nullptr, -1}" in REPLACEMENT_CORE,
+            "restoration does not preserve the stock recovery record for stale owned reassignment")
+assert_true("SP1-R3" in native_test,
+            "native transition tests do not cover restore -> stale-owned reassignment -> reconcile/re-enable recovery")
 assert_true("weak-lifetime" in native_test and "not executed on this host" in native_test,
             "native tests overclaim Foundation weak-lifetime proof for consumer destruction")
 assert_true("CAMLInvokeOriginalPackage(seam, consumer" in REPLACEMENT,

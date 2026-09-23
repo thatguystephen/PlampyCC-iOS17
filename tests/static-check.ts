@@ -229,6 +229,8 @@ for (const seam of ["Seam::ButtonPackage", "Seam::RoundPackage", "Seam::SliderPa
 }
 assert(replacement.includes("plampy.packageOwnedReplacement") && replacement.includes("objc_setAssociatedObject(replacement, kPackageOwnedKey") && replacement.includes("ObjCDescriptionOwned"), "constructed replacements are not marked owned for incoming classification");
 assert(core.includes("kind == IncomingKind::NewStock") && core.includes("input.prior.original"), "recording does not limit stock adoption to genuinely newer stock");
+assert(core.includes("RecoveryState{base.original, nullptr, -1}"), "restoration does not preserve the stock recovery record for stale owned reassignment");
+assert(nativeTest.includes("SP1-R3"), "native tests do not cover restore -> stale owned reassignment -> reconcile/re-enable recovery");
 assert(replacement.includes("weakObjectsHashTable") && replacement.includes("objc_getAssociatedObject(consumer, kPackageOverrideKey)"), "consumer destruction boundary is not association-scoped records in a weak registry");
 assert(nativeTest.includes("weak-lifetime") && nativeTest.includes("not executed on this host"), "native tests overclaim Foundation weak-lifetime proof for consumer destruction");
 

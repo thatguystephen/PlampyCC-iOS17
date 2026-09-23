@@ -29,7 +29,10 @@
 // waiting for another setter call. Restoration installs the recorded original
 // only while our applied replacement is provably still installed (verified
 // read-back), and a newer stock description is adopted as the recovery
-// original instead of ever being overwritten.
+// original instead of ever being overwritten. Restoration also preserves the
+// stock recovery record (original, nil) instead of clearing it, so a stale
+// owned re-assignment after a restore re-records against the preserved stock
+// and can never lose the known stock original.
 //
 // Owned-input classification (SP1-R1 correction): a setter input is not
 // necessarily stock — a caller may re-assign a description we previously

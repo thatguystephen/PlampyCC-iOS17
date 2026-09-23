@@ -337,11 +337,22 @@ inline ReconcilePlan PlanReconcileAction(const RecoveryState &base, InstallObser
                                  RecoveryState{base.original, desired, theme}};
         case ReconcileAction::RestoreStock:
             // Only reachable while our applied replacement is provably
-            // installed. Without a preserved real stock object (only possible
-            // for an owned input recorded before it ever had one) fail open and
-            // leave the installed description untouched.
+            // installed. Without a preserved real stock object, fail open and
+            // leave the installed description untouched. That missing original
+            // is reachable in two ways: (a) an owned input recorded before it
+            // ever had one (a record-less owned re-assignment), and (b) after
+            // a NoDescription (nil read-back) observation cleared a record
+            // that had one and an owned input was then re-recorded with no
+            // prior state. A restore itself never loses the original (below).
             if (!base.original) break;
-            return ReconcilePlan{action, true, base.original, seam, true, NoRecoveryState()};
+            // SP1-R3: restoration PRESERVES the stock recovery record —
+            // persist (original, nil) instead of clearing — so a stale owned
+            // re-assignment after a restore re-records against the preserved
+            // stock and the next reconcile restores the real original instead
+            // of failing open on a themed description. The NoDescription path
+            // above is the only transition that clears the record.
+            return ReconcilePlan{action, true, base.original, seam, false,
+                                 RecoveryState{base.original, nullptr, -1}};
         case ReconcileAction::KeepInstalled:
             break;
     }
