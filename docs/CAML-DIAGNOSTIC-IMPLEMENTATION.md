@@ -30,11 +30,11 @@ The hooks are installed once and are never dynamically unhooked or rehooked. Eve
 
 ## Log path and fixed schema
 
-When enabled, bounded events are appended to the tweak-owned rootless path:
+When enabled, bounded events are appended to the per-user, mobile-writable root:
 
 `/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl`
 
-The directory is created with mode `0700`; the file is restricted to `0600`. Events use fixed compact JSON keys (`v` version, `t` monotonic milliseconds, `w` wall-clock seconds, `s` site, `p` package name, `x` coarse path prefix, `n` description-is-new, `g` glyph state, `d` description class, `i` view tag, `a` ancestor class, `c` consumer class, `h` construction path, `f` source-URL form, `y` proposed-replacement-URL form, `o` load/rejection outcome, `r` repeat, `q` per-site installation success, `b` build ID, `u` Mach-O UUID).
+This is the runtime-data path produced by `ROOT_PATH_NS("/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic")`, so the macro contributes exactly one `/var/jb` prefix. It is intentionally separate from the packaged, system-wide assets at `/var/jb/Library/Application Support/PlampyCC`; the collector never writes output below that root-owned asset tree. The directory is created by the SpringBoard/mobile writer with mode `0700`, and the file is restricted to `0600`. Events use fixed compact JSON keys (`v` version, `t` monotonic milliseconds, `w` wall-clock seconds, `s` site, `p` package name, `x` coarse path prefix, `n` description-is-new, `g` glyph state, `d` description class, `i` view tag, `a` ancestor class, `c` consumer class, `h` construction path, `f` source-URL form, `y` proposed-replacement-URL form, `o` load/rejection outcome, `r` repeat, `q` per-site installation success, `b` build ID, `u` Mach-O UUID).
 
 `x` is a coarse path classification (`private`, `var`, `app-container`, `Applications`, or `other`). Full paths, package URLs, CAML/XML contents, asset bytes, user data, and raw pointer values are never serialized. Package names, class names, and state strings are emitted only when they exactly match the fixed approved-value allowlists; every other value becomes `unknown`, `unknown-class`, or `unknown-state`.
 
@@ -42,7 +42,7 @@ The in-memory ring contains at most 512 events. The shared `CAMLDiagnosticCore.h
 
 ## Build ID and provenance
 
-Source build ID: `plampycc-caml-observer-v1`.
+Source build IDs: `plampycc-caml-observer-v2` for the release build and `plampycc-caml-observer-v2-diag` for the collector build.
 
 The install event records the build ID and the tweak Mach-O UUID discovered from the loaded image's `LC_UUID` command; ordinary events retain those fixed fields as empty values. Each serialized event is capped at 384 bytes, and the ring remains fixed at 512 records (<192 KiB) with the existing session/file bounds. The Apple Silicon workflow also records the exact source SHA, workflow run, Xcode version, pinned Theos revision, pinned SDK revision/name, package hashes, and unstripped symbol hashes in `dist/build-manifest.json` and `dist/SHA256SUMS`.
 

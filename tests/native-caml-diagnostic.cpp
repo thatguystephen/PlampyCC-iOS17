@@ -85,6 +85,50 @@ static void TestInjectedSyscallAdapter() {
     assert(!WriteAll(incomplete, 1, payload, 1));
 }
 
+static void TestDiagnosticMappingPolicies() {
+    // The compile-time gate dominates every runtime state: a release binary
+    // can never admit an observer body, even if all other inputs are benign.
+    for (bool loggingDisabled : {false, true})
+        for (bool inObserver : {false, true})
+            for (bool verbose : {false, true})
+                for (bool verboseOnly : {false, true})
+                    assert(!AdmitObserverBody({inObserver, loggingDisabled, false, verbose, verboseOnly}));
+    assert(AdmitObserverBody({false, false, true, false, false}));
+    assert(!AdmitObserverBody({false, false, true, false, true}));
+    assert(AdmitObserverBody({false, false, true, true, true}));
+    assert(!AdmitObserverBody({true, false, true, true, false}));
+    assert(!AdmitObserverBody({false, true, true, true, false}));
+
+    assert(strcmp(SourceURLForm(false, false, false), "none") == 0);
+    assert(strcmp(SourceURLForm(false, true, true), "none") == 0);
+    assert(strcmp(SourceURLForm(true, false, true), "none") == 0);
+    assert(strcmp(SourceURLForm(true, true, true), "file") == 0);
+    assert(strcmp(SourceURLForm(true, true, false), "non-file") == 0);
+
+    assert(strcmp(ProposedURLForm(false), "none") == 0);
+    assert(strcmp(ProposedURLForm(true), "file-string") == 0);
+
+    assert(strcmp(ConstructionPathForSite(nullptr), "unknown") == 0);
+    assert(strcmp(ConstructionPathForSite("button-package"), "setter") == 0);
+    assert(strcmp(ConstructionPathForSite("round-package"), "setter") == 0);
+    assert(strcmp(ConstructionPathForSite("slider-package"), "slider") == 0);
+    assert(strcmp(ConstructionPathForSite("button-state"), "state") == 0);
+    assert(strcmp(ConstructionPathForSite("slider-state"), "state") == 0);
+    assert(strcmp(ConstructionPathForSite("factory"), "factory") == 0);
+    assert(strcmp(ConstructionPathForSite("controller"), "controller") == 0);
+    assert(strcmp(ConstructionPathForSite("other"), "unknown") == 0);
+    assert(IsLoadClassificationPath("setter"));
+    assert(IsLoadClassificationPath("slider"));
+    assert(!IsLoadClassificationPath("state"));
+    assert(!IsLoadClassificationPath("unknown"));
+    assert(!IsLoadClassificationPath(nullptr));
+
+    assert(strcmp(LoadOutcomeForEvidence(false, false), "none") == 0);
+    assert(strcmp(LoadOutcomeForEvidence(false, true), "none") == 0);
+    assert(strcmp(LoadOutcomeForEvidence(true, false), "rejected") == 0);
+    assert(strcmp(LoadOutcomeForEvidence(true, true), "loaded") == 0);
+}
+
 static void TestRuntimeInstallDecision() {
     assert(DecideRuntimeInstall({true, true, true, true, true}) == RuntimeInstallDecision::Installed);
     assert(DecideRuntimeInstall({false, false, false, false, false}) == RuntimeInstallDecision::MissingClass);
@@ -566,6 +610,7 @@ int main() {
     TestDedupPolicy();
     TestRetention();
     TestInjectedSyscallAdapter();
+    TestDiagnosticMappingPolicies();
     TestRuntimeInstallDecision();
     TestReplacementRouting();
     TestAtomicFaultBoundary();

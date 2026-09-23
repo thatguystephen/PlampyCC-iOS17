@@ -256,6 +256,15 @@ assert_true("gDarwinSyscalls" in SOURCE and "DarwinOpenAt" in SOURCE and "Darwin
 assert_true("O_NOFOLLOW" in SOURCE and "openat(" in SOURCE and "fstat(" in SOURCE and "S_ISREG" in SOURCE, "descriptor confinement is missing")
 assert_true("renameAt" in SOURCE and "sync" in SOURCE and "CAMLScopedTempFile" in SOURCE, "atomic commit ownership boundary is missing")
 assert_true("status.st_uid != geteuid()" in SOURCE and "(status.st_mode & 0777) != 0600" in SOURCE, "owner/mode validation is missing")
+output_directory = function_body(SOURCE, "DiagnosticOutputDirectory")
+assert_true('ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic")' in output_directory,
+            "diagnostic output must stay under the mobile-writable root")
+assert_true('ROOT_PATH_NS(@"/Library/Application Support/PlampyCC/CAML-Diagnostic")' not in output_directory,
+            "diagnostic output must not use the root-owned system asset root")
+assert_true("CAML-Diagnostic" in DOC and "/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl" in DOC,
+            "implementation document does not name the mobile-writable diagnostic output path")
+assert_true("plampycc-caml-observer-v2" in DOC and "plampycc-caml-observer-v2-diag" in DOC and "plampycc-caml-observer-v1" not in DOC,
+            "implementation document has stale diagnostic build ID")
 assert_true("CompleteLinePrefix" in SOURCE and "events.jsonl.tmp" in SOURCE, "restart tail/temp recovery boundary is missing")
 assert_true("NSFileHandle" not in SOURCE and "fileExistsAtPath" not in SOURCE, "path-based diagnostic output API remains")
 
@@ -269,6 +278,12 @@ with tempfile.TemporaryDirectory(prefix="caml-contract-") as directory:
     assert_true(result.returncode == 0, f"native production-helper compile failed:\n{result.stderr}")
     result = subprocess.run([str(binary)], cwd=ROOT, text=True, capture_output=True)
     assert_true(result.returncode == 0, f"native production-helper contract failed:\n{result.stderr}")
+
+output_test = subprocess.run(
+    ["python3", "tests/caml-diagnostic-output.py"],
+    cwd=ROOT, text=True, capture_output=True,
+)
+assert_true(output_test.returncode == 0, f"mobile-writable diagnostic output contract failed:\n{output_test.stderr}")
 
 assert_true("runs-on: macos-15" in WORKFLOW and "test \"$(uname -m)\" = arm64" in WORKFLOW, "Apple Silicon rootless build preflight is missing")
 assert_true("tests/caml-diagnostic-contract.py" in WORKFLOW and "tests/caml-diagnostic-artifact.py" in WORKFLOW, "contract tests are not wired into CI")

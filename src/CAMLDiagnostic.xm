@@ -248,11 +248,10 @@ private:
 };
 
 static NSString *DiagnosticOutputDirectory(void) {
-    NSString *primary = ROOT_PATH_NS(@"/Library/Application Support/PlampyCC/CAML-Diagnostic");
-    NSString *legacy = ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic");
-    BOOL primaryExists = access(primary.fileSystemRepresentation, F_OK) == 0;
-    BOOL legacyExists = access(legacy.fileSystemRepresentation, F_OK) == 0;
-    return primaryExists || !legacyExists ? primary : legacy;
+    // Diagnostic output is per-user runtime data. Packaged CAML assets use the
+    // system-wide root above, but SpringBoard writes events as mobile under the
+    // mobile-writable root; ROOT_PATH_NS adds exactly one /var/jb prefix.
+    return ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic");
 }
 
 static bool ValidateDirectoryFD(int descriptor, bool leaf) {

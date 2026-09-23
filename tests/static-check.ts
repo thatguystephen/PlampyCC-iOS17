@@ -29,6 +29,7 @@ const blocker = await read("CAML-ROUTING-BLOCKER.md");
 const control = await read("control");
 const prefsController = await read("prefs/RootListController.m");
 const prefsPlist = await read("prefs/Root.plist");
+const settingsRegistration = await read("layout/Library/PreferenceLoader/Preferences/PlampyCC.plist");
 const sites = await read("src/CAMLDiagnostic.xm");
 const hooks = await read("src/CAMLDiagnosticHooks.mm");
 const replacement = await read("src/CAMLReplacement.xm");
@@ -68,6 +69,13 @@ for (const path of [
   "layout/Library/MobileSubstrate/DynamicLibraries/PlampyCC.plist",
   "layout/Library/PreferenceLoader/Preferences/PlampyCC.plist",
 ]) assert(await exists(path), `missing logical staged registration ${path}`);
+const entryMatch = settingsRegistration.match(/<key>entry<\/key>\s*<dict>([\s\S]*?)<\/dict>/);
+assert(entryMatch, "PreferenceLoader registration entry dict is missing");
+const entry = entryMatch[1];
+const field = (name: string) => entry.match(new RegExp(`<key>${name}<\\/key>\\s*<string>([^<]+)<\\/string>`))?.[1];
+assert(field("bundle") === "PlampyCC" && !field("bundle")?.endsWith(".bundle"), "PreferenceLoader bundle must be the controller class name without .bundle");
+assert(field("icon") === "icon.png", "PreferenceLoader icon registration is missing or incorrect");
+assert(/<key>isController<\/key>\s*<integer>1<\/integer>/.test(entry), "PreferenceLoader isController=1 registration is missing");
 assert(!(await exists("layout/var/jb")), "staged layout still has a rootless prefix directory");
 for (const theme of ["Plampy", "Pulsar"]) assert(await exists(`layout/Library/Application Support/PlampyCC/${theme}/wallpaper.jpeg`), `missing staged ${theme} wallpaper`);
 
