@@ -19,47 +19,6 @@ function reconcileGlyph(state: any): any {
   return { ...state, currentImage: state.replacementImage, originalImage: original, appliedImage: state.replacementImage };
 }
 const disableGlyph = (state: any) => reconcileGlyph({ ...state, enabled: false });
-// Live CAML package reconciliation model (SP1): mirrors the production
-// transition in src/CAMLReplacement.xm — read-back classification, newer-stock
-// adoption, and the caml_replacement::DecideReconcile decision table.
-function classifyPackageInstall(state: any): string {
-  if (!state.installed) return "none";
-  if (state.applied && state.installed === state.applied) return "owned";
-  if (state.installed === state.original) return "stock";
-  return "changed";
-}
-function decidePackageReconcile(facts: any): string {
-  if (facts.observation === "none") return "keep";
-  const owned = facts.observation === "owned";
-  if (facts.enabled && facts.replacementAvailable) return owned && facts.themeSatisfies ? "keep" : "apply";
-  return owned ? "restore" : "keep";
-}
-function recordPackageInstall(seam: string, stock: string, installed: any, owned: boolean, theme: string): any {
-  return { seam, identifier: stock, original: stock, applied: owned ? installed : null, appliedTheme: owned ? theme : null };
-}
-function reconcilePackage(state: any, installed: any, prefs: any): any {
-  const seam = state.seam;
-  if (!installed) return { seam, identifier: null, original: null, applied: null, appliedTheme: null, installed };
-  const observation = classifyPackageInstall({ ...state, installed });
-  let original = state.original ?? installed;
-  let applied = state.applied;
-  let appliedTheme = state.appliedTheme;
-  if (observation === "changed") { original = installed; applied = null; appliedTheme = null; }
-  const identifier = original;
-  const installedIsApplied = !!applied && installed === applied;
-  const action = decidePackageReconcile({
-    enabled: prefs.enabled,
-    replacementAvailable: !!prefs.replacement,
-    observation,
-    themeSatisfies: installedIsApplied && appliedTheme === prefs.theme,
-  });
-  if (action === "apply") return { seam, identifier, original, applied: prefs.replacement, appliedTheme: prefs.theme, installed: prefs.replacement };
-  if (action === "restore") return { seam, identifier: null, original: null, applied: null, appliedTheme: null, installed: original };
-  return { seam, identifier, original, applied: installedIsApplied ? applied : null, appliedTheme: installedIsApplied ? appliedTheme : null, installed };
-}
-// Weak consumer registry model: destroyed consumers drop out of the pass.
-const packageRegistry = new Set<string>();
-const destroyPackageConsumer = (consumer: string) => packageRegistry.delete(consumer);
 const source = await read("src/Tweak.xm");
 const makefile = await read("Makefile");
 const prefsMakefile = await read("prefs/Makefile");
@@ -161,7 +120,7 @@ assert(!hooks.includes("objc_release") && hooks.split("[replacement release]").l
 assert(replacement.includes("weakObjectsHashTable") && replacement.includes("allObjects"), "package consumers are not tracked weakly for their lifetimes");
 for (const key of ['@"identifier"', '@"original"', '@"applied"', '@"appliedTheme"']) assert(replacement.includes(key), `package recovery state is not identity-aware: ${key}`);
 assert(replacement.includes("plampy.packageOverride") && replacement.includes("plampy.packageSeam"), "package recovery state is not association-scoped to the consumer");
-assert(replacement.includes("ClassifyInstall") && replacement.includes("DecideReconcile") && core.includes("DecideReconcile"), "package reconcile does not run the production decision policy");
+assert(replacement.includes("caml_replacement::ObserveReconcile") && replacement.includes("caml_replacement::PlanReconcileAction") && core.includes("ClassifyInstall") && core.includes("DecideReconcile"), "package reconcile does not run the production decision policy");
 assert(replacement.includes("ReadInstalledDescription(consumer, &probe)") && replacement.includes("glyphPackageDescription"), "factory does not require a verified recovery read-back before taking ownership");
 assert(replacement.includes("CAMLInvokeOriginalPackage(seam, consumer"), "reconcile does not apply/restore through the original-IMP slots");
 assert(replacement.includes("if (![NSThread isMainThread])"), "package state updates are not main-thread confined");
@@ -245,43 +204,34 @@ glyph = reconcileGlyph({ enabled: true, identifier: "com.apple.camera", mappedIc
 glyph = disableGlyph(glyph);
 assert(glyph.currentImage === "changed-stock", "changed stock image was overwritten during restore");
 
-// Live CAML package reconciliation transitions across the three verified
-// setter seams (source-verification step 2, acceptance criteria SP1). Model and
-// production share the classification and decision policies exercised natively.
-for (const seam of ["button", "round", "slider"]) {
-  packageRegistry.add(`consumer-${seam}`);
-  // 1. Disabled startup installs untouched stock; enabling themes it.
-  let pkg = { ...recordPackageInstall(seam, "stock-wifi", "stock-wifi", false, "Plampy"), installed: "stock-wifi" };
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: false, theme: "Plampy", replacement: null });
-  assert(pkg.installed === "stock-wifi" && pkg.applied === null, `${seam}: disabled startup must preserve untouched stock`);
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Plampy", replacement: "T-Plampy" });
-  assert(pkg.installed === "T-Plampy" && pkg.applied === "T-Plampy" && pkg.original === "stock-wifi", `${seam}: enable does not theme preserved stock`);
-  // 2. Plampy→Pulsar theme change swaps the owned replacement idempotently.
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: "T-Pulsar" });
-  assert(pkg.installed === "T-Pulsar" && pkg.applied === "T-Pulsar" && pkg.original === "stock-wifi", `${seam}: theme change does not swap the owned replacement`);
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: "T-Pulsar" });
-  assert(pkg.installed === "T-Pulsar" && pkg.applied === "T-Pulsar", `${seam}: theme change swap is not idempotent`);
-  // 3. Disable restores captured stock; re-enable themes again.
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: false, theme: "Pulsar", replacement: null });
-  assert(pkg.installed === "stock-wifi" && pkg.applied === null, `${seam}: disable does not restore owned state`);
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: "T-Pulsar" });
-  assert(pkg.installed === "T-Pulsar", `${seam}: re-enable does not theme stock again`);
-  // 4. Missing or unsupported resources restore stock when owned.
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: null });
-  assert(pkg.installed === "stock-wifi" && pkg.applied === null, `${seam}: missing resource does not restore stock`);
-  // 5. Newer stock assignments (including identity changes) are adopted and never overwritten.
-  pkg = reconcilePackage({ ...pkg, identifier: "old-stem", original: "old-stock", applied: "T-old", appliedTheme: "Plampy" }, "new-stock", { enabled: false, theme: "Plampy", replacement: null });
-  assert(pkg.installed === "new-stock" && pkg.original === "new-stock" && pkg.applied === null, `${seam}: changed stock was overwritten or kept ownership`);
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Plampy", replacement: "T-Plampy" });
-  assert(pkg.installed === "T-Plampy" && pkg.original === "new-stock", `${seam}: changed stock is not themed under its own identity`);
-  // 6. Unsupported theme after ownership: restore preserves the original.
-  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Plampy", replacement: null });
-  assert(pkg.installed === "new-stock" && pkg.applied === null, `${seam}: unsupported resources keep an owned override installed`);
-  // 7. Consumer destruction: the weak registry drops destroyed consumers before the pass.
-  assert(destroyPackageConsumer(`consumer-${seam}`), `${seam}: weak registry does not drop destroyed consumers`);
-  assert(!packageRegistry.has(`consumer-${seam}`), `${seam}: destroyed consumer survives the weak registry`);
+// SP1-R1/SP1-R2: stateful package recovery transitions are exercised against
+// the PRODUCTION transitions (caml_replacement::ClassifyIncoming /
+// PlanConstruction / RecordInstall / ObserveReconcile / PlanReconcileAction in
+// src/CAMLReplacementCore.hpp, the exact functions the adapter delegates to)
+// in tests/native-caml-diagnostic.cpp across all three setter seams, asserting
+// object-identity/original preservation (owned re-assignment keeps the real
+// stock original, factory misses keep ownership, genuinely newer stock is the
+// only adopted original). No TypeScript duplicate of the state model exists
+// here: a parallel model cannot establish the adapter's ownership
+// transitions, and deleting a string from a Set is not Foundation
+// weak-lifetime proof. This file only couples those production transitions to
+// the source shapes below.
+const nativeTest = await read("tests/native-caml-diagnostic.cpp");
+for (const transition of ["ClassifyIncoming", "PlanConstruction", "RecordInstall", "ObserveReconcile", "PlanReconcileAction"]) {
+  assert(replacement.includes(`caml_replacement::${transition}(`), `adapter does not delegate to the production transition ${transition}`);
+  assert(core.includes(transition), `CAMLReplacementCore.hpp does not define the production transition ${transition}`);
+  assert(nativeTest.includes(`${transition}(`), `native tests do not exercise the production transition ${transition}`);
 }
+assert(nativeTest.includes("TestPackageRecoveryTransitions()"), "stateful recovery transition tests are not wired into the native suite");
+for (const seam of ["Seam::ButtonPackage", "Seam::RoundPackage", "Seam::SliderPackage"]) {
+  assert(core.includes(seam.replace("Seam::", "")), `recovery policy is missing seam identity ${seam}`);
+  assert(nativeTest.includes(seam), `recovery transition coverage is not exercised at ${seam}`);
+}
+assert(replacement.includes("plampy.packageOwnedReplacement") && replacement.includes("objc_setAssociatedObject(replacement, kPackageOwnedKey") && replacement.includes("ObjCDescriptionOwned"), "constructed replacements are not marked owned for incoming classification");
+assert(core.includes("kind == IncomingKind::NewStock") && core.includes("input.prior.original"), "recording does not limit stock adoption to genuinely newer stock");
+assert(replacement.includes("weakObjectsHashTable") && replacement.includes("objc_getAssociatedObject(consumer, kPackageOverrideKey)"), "consumer destruction boundary is not association-scoped records in a weak registry");
+assert(nativeTest.includes("weak-lifetime") && nativeTest.includes("not executed on this host"), "native tests overclaim Foundation weak-lifetime proof for consumer destruction");
 
 for (const field of ["target_names", "exactly one package is required", "symbols must contain tweak and preferences targets", "unstrippedBinaries", "sha256"]) assert(emitter.includes(field), `manifest producer contract missing ${field}`);
 
-console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, live package preference reconciliation transitions across all three setter seams, rootless staging/strip contract, and producer/consumer manifest coverage");
+console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, production-delegated package recovery transitions (identity/original preservation) exercised natively across all three setter seams with honest weak-lifetime limits, rootless staging/strip contract, and producer/consumer manifest coverage");

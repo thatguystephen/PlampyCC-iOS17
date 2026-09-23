@@ -5,7 +5,7 @@
 // This module only ever uses the declarations in src/CAMLVerifiedABI.h: the
 // package-description initializer, packageURL, and the glyphPackageDescription
 // recovery read-back. The three hooked setters are invoked through their
-// original-IMP slots (the shim's hook bodies and CAMLInvokeOriginalPackage),
+// original-IMP slots (the shim's hook bodies and CAMLInvokeOriginalPackage)
 // never through re-declared selectors here. No private URL ivar is ever read
 // or written.
 //
@@ -30,6 +30,22 @@
 // only while our applied replacement is provably still installed (verified
 // read-back), and a newer stock description is adopted as the recovery
 // original instead of ever being overwritten.
+//
+// Owned-input classification (SP1-R1 correction): a setter input is not
+// necessarily stock — a caller may re-assign a description we previously
+// installed (ABI map §4 describes valid same-object setter assignments).
+// Every input is classified against the recorded owned/applied state before
+// construction and recording: an owned replacement is never recorded as stock
+// and never replaces the preserved real-stock recovery object (that original
+// survives even when reconstruction fails), while a genuinely newer stock
+// description is still adopted as the recovery original. The classification
+// and record/reconcile transitions live in src/CAMLReplacementCore.hpp
+// (caml_replacement::ClassifyIncoming / PlanConstruction / RecordInstall /
+// ObserveReconcile / PlanReconcileAction) and are the exact code exercised by
+// tests/native-caml-diagnostic.cpp through injected handle boundaries; this
+// module is the Objective-C adapter around them. Descriptions constructed
+// here carry an owned-marker association so a stale owned replacement can
+// never masquerade as "genuinely newer stock".
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -78,13 +94,19 @@ static BOOL SameDescription(__unsafe_unretained id left, __unsafe_unretained id 
 // ---- owned/applied recovery state (per consumer) ----
 
 // State mirrors the proven static-glyph model (plampy.glyphOverride): an
-// identity key, the recovery original (newest stock description seen), and the
-// owned applied replacement plus the theme it was built for. All references
-// are strong but bounded to the consumer's lifetime: the record is an
-// associated object and the registry below is weak, so consumer destruction
+// identity key, the recovery original (newest genuine stock description seen),
+// and the owned applied replacement plus the theme it was built for. All
+// references are strong but bounded to the consumer's lifetime: the record is
+// an associated object and the registry below is weak, so consumer destruction
 // releases the record (and its original/applied references) automatically.
+// (That teardown is Foundation runtime behavior: structurally relied upon
+// here, not executable on a non-Darwin host and never claimed as host-tested.)
 static const char kPackageOverrideKey[] = "plampy.packageOverride";
 static const char kPackageSeamKey[] = "plampy.packageSeam";
+// Owned-marker association: set on every description this factory constructs.
+// ClassifyIncoming consults it so a stale owned replacement re-assigned after
+// its record is gone can never be adopted as "genuinely newer stock".
+static const char kPackageOwnedKey[] = "plampy.packageOwnedReplacement";
 
 static NSHashTable *PackageConsumers(void) {
     static NSHashTable *consumers;
@@ -105,6 +127,47 @@ static void StorePackageState(__unsafe_unretained id consumer, NSString *identif
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
+// ---- injected handle boundaries for the pure transitions ----
+
+static caml_replacement::DescriptionHandle HandleOf(__unsafe_unretained id description) {
+    return (__bridge caml_replacement::DescriptionHandle)description;
+}
+
+static id ObjectFor(caml_replacement::DescriptionHandle handle) {
+    return (__bridge id)handle;
+}
+
+static bool ObjCDescriptionEqual(caml_replacement::DescriptionHandle left,
+                                 caml_replacement::DescriptionHandle right) {
+    return SameDescription(ObjectFor(left), ObjectFor(right)) ? true : false;
+}
+
+static bool ObjCDescriptionOwned(caml_replacement::DescriptionHandle handle) {
+    if (!handle) return false;
+    return objc_getAssociatedObject(ObjectFor(handle), kPackageOwnedKey) != nil;
+}
+
+static caml_replacement::RecoveryState LoadRecoveryState(__unsafe_unretained id consumer,
+                                                        bool *outPresent) {
+    NSDictionary *state = objc_getAssociatedObject(consumer, kPackageOverrideKey);
+    if (outPresent) *outPresent = state != nil;
+    caml_replacement::RecoveryState loaded = caml_replacement::NoRecoveryState();
+    loaded.original = HandleOf(state[@"original"]);
+    loaded.applied = HandleOf(state[@"applied"]);
+    NSNumber *appliedTheme = state[@"appliedTheme"];
+    loaded.appliedTheme = loaded.applied ? appliedTheme.intValue : -1;
+    return loaded;
+}
+
+static void StoreRecoveryState(__unsafe_unretained id consumer,
+                               const caml_replacement::RecoveryState &state) {
+    id original = ObjectFor(state.original);
+    id applied = ObjectFor(state.applied);
+    NSString *identifier = original ? CAMLPackageStem(original) : nil;
+    NSNumber *appliedTheme = applied ? @(state.appliedTheme) : nil;
+    StorePackageState(consumer, identifier, original, applied, appliedTheme);
+}
+
 // ---- construction boundary (called by the non-ARC shim and the reconcile pass) ----
 
 extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
@@ -117,7 +180,17 @@ extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
         // installed description cannot be read back for verified restoration.
         id probe = nil;
         if (!ReadInstalledDescription(consumer, &probe)) return nil;
-        NSString *name = CAMLPackageStem(description);
+        // SP1-R1 classification before construction (production policy): an
+        // input that is already an owned replacement is never treated as
+        // stock. It is kept as-is while it is the current applied replacement
+        // for this theme, and rebuilt from the preserved real stock otherwise.
+        bool hasPrior = false;
+        caml_replacement::RecoveryState prior = LoadRecoveryState(consumer, &hasPrior);
+        caml_replacement::ConstructionPlan plan = caml_replacement::PlanConstruction(
+            prior, hasPrior, HandleOf(description), PlampyCCThemeType(),
+            &ObjCDescriptionEqual, &ObjCDescriptionOwned);
+        if (plan.keepOwned) return nil;
+        NSString *name = CAMLPackageStem(ObjectFor(plan.source));
         if (!name) return nil;
 
         NSString *theme = PlampyCCThemeType() == 1 ? @"Pulsar" : @"Plampy";
@@ -145,6 +218,11 @@ extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
         // Fail open if the private initializer did not resolve a package inside our bundle.
         id replacementURL = ((id(*)(id, SEL))objc_msgSend)(replacement, @selector(packageURL));
         if (![replacementURL isKindOfClass:[NSURL class]]) return nil;
+        // Mark the construction as ours for good: later setter inputs that are
+        // replacements we built are classified OwnedReplacement and can never
+        // be recorded as stock, no matter what happens to the record.
+        objc_setAssociatedObject(replacement, kPackageOwnedKey, @YES,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         return replacement;
     } @catch (...) {
         return nil;
@@ -154,7 +232,7 @@ extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
 // ---- install record (called by the shim after the original setter invocation) ----
 
 extern "C" void CAMLRecordPackageInstall(__unsafe_unretained id consumer,
-                              __unsafe_unretained id stockDescription,
+                              __unsafe_unretained id incomingDescription,
                               __unsafe_unretained id installedDescription,
                               bool installedOwned, int seam) {
     @try {
@@ -163,10 +241,10 @@ extern "C" void CAMLRecordPackageInstall(__unsafe_unretained id consumer,
             // that assumption. Strong locals keep the borrowed arguments alive
             // across the defer.
             id consumerStrong = consumer;
-            id stock = stockDescription;
+            id incoming = incomingDescription;
             id installed = installedDescription;
             dispatch_async(dispatch_get_main_queue(), ^{
-                CAMLRecordPackageInstall(consumerStrong, stock, installed, installedOwned, seam);
+                CAMLRecordPackageInstall(consumerStrong, incoming, installed, installedOwned, seam);
             });
             return;
         }
@@ -174,14 +252,26 @@ extern "C" void CAMLRecordPackageInstall(__unsafe_unretained id consumer,
         [PackageConsumers() addObject:consumer];
         objc_setAssociatedObject(consumer, kPackageSeamKey, @(seam),
                                  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        NSString *identifier = CAMLPackageStem(stockDescription);
-        if (!identifier) return; // non-conforming stock: nothing to own or recover
-        // The newest stock description always wins as the recovery original
-        // (identity changes and re-assignments supersede older records); the
-        // applied field distinguishes our owned replacement from untouched stock.
-        id applied = installedOwned ? installedDescription : nil;
-        NSNumber *appliedTheme = installedOwned ? @(PlampyCCThemeType()) : nil;
-        StorePackageState(consumer, identifier, stockDescription, applied, appliedTheme);
+        bool hasPrior = false;
+        caml_replacement::RecoveryState prior = LoadRecoveryState(consumer, &hasPrior);
+        caml_replacement::DescriptionHandle incoming = HandleOf(incomingDescription);
+        // SP1-R1 classification before recording (production policy): only a
+        // genuinely newer stock description can become the recovery original.
+        if (caml_replacement::ClassifyIncoming(prior, hasPrior, incoming, &ObjCDescriptionEqual,
+                                              &ObjCDescriptionOwned) ==
+            caml_replacement::IncomingKind::NewStock) {
+            // Non-conforming stock has no package identity to recover or route:
+            // leave any existing record untouched (fail open). An owned input
+            // always records, so ownership and the preserved original survive
+            // even when reconstruction missed.
+            if (!CAMLPackageStem(incomingDescription)) return;
+        }
+        caml_replacement::InstallInput input = {
+            prior, hasPrior, incoming, HandleOf(installedDescription), installedOwned,
+            PlampyCCThemeType(), seam,
+        };
+        StoreRecoveryState(consumer, caml_replacement::RecordInstall(
+                                        input, &ObjCDescriptionEqual, &ObjCDescriptionOwned));
     } @catch (...) {
         // Fail open: tracking is best effort and the stock setter already ran.
     }
@@ -197,57 +287,36 @@ static void ReconcilePackageConsumer(__unsafe_unretained id consumer) {
         id installed = nil;
         if (!ReadInstalledDescription(consumer, &installed)) return; // fail open: no verified recovery read-back
 
-        NSDictionary *state = objc_getAssociatedObject(consumer, kPackageOverrideKey);
-        id original = state[@"original"];
-        id applied = state[@"applied"];
-        NSNumber *appliedTheme = state[@"appliedTheme"];
-        BOOL installedIsApplied = applied != nil && SameDescription(installed, applied);
-        BOOL installedIsOriginal = original != nil && SameDescription(installed, original);
-        caml_replacement::InstallObservation observation = caml_replacement::ClassifyInstall(
-            installed != nil, installedIsApplied, installedIsOriginal);
-        if (observation == caml_replacement::InstallObservation::StockChanged) {
-            // A newer stock description (assigned outside the intercepted
-            // seams) is installed: adopt it as the recovery original and drop
-            // ownership so restoration can never overwrite it.
-            original = installed;
-            applied = nil;
-            appliedTheme = nil;
-        }
-        if (observation == caml_replacement::InstallObservation::NoDescription) {
-            StorePackageState(consumer, nil, nil, nil, nil); // nothing to own or recover
-            return;
-        }
+        bool hasPrior = false;
+        caml_replacement::RecoveryState prior = LoadRecoveryState(consumer, &hasPrior);
+        caml_replacement::DescriptionHandle installedHandle = HandleOf(installed);
+        // Production transitions (CAMLReplacementCore.hpp): classify the
+        // read-back and adopt genuinely newer stock first, then decide with the
+        // factory probe result and persist exactly the planned state. The
+        // NoDescription (cleared/destroyed record) case resolves inside the
+        // same planned path: no construction source, no setter invocation,
+        // record cleared.
+        caml_replacement::ReconcileObservation observed = caml_replacement::ObserveReconcile(
+            prior, hasPrior, installedHandle, installed != nil, &ObjCDescriptionEqual);
 
-        NSString *identifier = CAMLPackageStem(original);
         bool sliderSite = seam == (int)caml_replacement::Seam::SliderPackage;
         // Attempting the construction is the resource-availability probe: a
         // missing or unsupported theme resource yields nil and drives the
-        // restore/keep decisions below. The +1 result is released exactly once
-        // by ARC at scope end when it is not installed.
-        id desired = identifier ? CAMLCreateReplacementDescription(consumer, original, sliderSite) : nil;
-        bool ownedThemeSatisfies =
-            applied != nil && appliedTheme != nil && appliedTheme.intValue == PlampyCCThemeType();
-        caml_replacement::ReconcileFacts facts = {
-            PlampyCCFunctionalEnabled(), desired != nil, observation, ownedThemeSatisfies,
-        };
-        switch (caml_replacement::DecideReconcile(facts)) {
-            case caml_replacement::ReconcileAction::KeepInstalled:
-                // Preserve the installed description untouched (stock or owned).
-                StorePackageState(consumer, identifier, original,
-                                  installedIsApplied ? applied : nil,
-                                  installedIsApplied ? appliedTheme : nil);
-                break;
-            case caml_replacement::ReconcileAction::ApplyReplacement:
-                CAMLInvokeOriginalPackage(seam, consumer, desired);
-                StorePackageState(consumer, identifier, original, desired, @(PlampyCCThemeType()));
-                break;
-            case caml_replacement::ReconcileAction::RestoreStock:
-                // Only reachable while our applied replacement is provably
-                // installed (class: OwnedReplacement), so the recorded original
-                // is exactly the newest stock description to put back.
-                CAMLInvokeOriginalPackage(seam, consumer, original);
-                StorePackageState(consumer, nil, nil, nil, nil);
-                break;
+        // restore/keep decisions below. The construction source is always the
+        // real stock description (never an owned replacement). The +1 result is
+        // released exactly once by ARC at scope end when it is not installed.
+        id desired = observed.constructionSource
+                         ? CAMLCreateReplacementDescription(
+                               consumer, ObjectFor(observed.constructionSource), sliderSite)
+                         : nil;
+        caml_replacement::ReconcilePlan plan = caml_replacement::PlanReconcileAction(
+            observed.base, observed.kind, installedHandle, PlampyCCFunctionalEnabled(),
+            HandleOf(desired), PlampyCCThemeType(), seam, &ObjCDescriptionEqual);
+        if (plan.perform) CAMLInvokeOriginalPackage(seam, consumer, ObjectFor(plan.invoke));
+        if (plan.clear) {
+            StorePackageState(consumer, nil, nil, nil, nil);
+        } else {
+            StoreRecoveryState(consumer, plan.next);
         }
     } @catch (...) {
         // Fail open per consumer: leave the installed description untouched.

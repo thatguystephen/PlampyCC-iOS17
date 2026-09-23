@@ -141,23 +141,43 @@ assert_true("CAMLReplacementCore.hpp" in (ROOT / "tests/native-caml-diagnostic.c
 # SP1 live preference reconciliation: owned/applied recovery state, weak
 # consumer lifetime tracking, main-thread reconcile from the preference reload
 # seam, newest-stock preservation, and production-coupled transition tests
-# across all three verified setter seams.
+# across all three verified setter seams. SP1-R1/SP1-R2: the ARC adapter must
+# DELEGATE every classification/record/reconcile transition to the shared
+# production policy (no local transition reimplementation), mark its own
+# constructions so owned inputs are never taken for stock, and the native
+# suite must exercise those exact transitions with identity assertions and an
+# honest weak-lifetime limitation.
 TWEAK = (ROOT / "src/Tweak.xm").read_text()
 native_test = (ROOT / "tests/native-caml-diagnostic.cpp").read_text()
-for token in ("ClassifyInstall", "DecideReconcile", "Seam::ButtonPackage", "Seam::RoundPackage", "Seam::SliderPackage"):
+for token in ("ClassifyInstall", "DecideReconcile", "ClassifyIncoming", "PlanConstruction",
+              "RecordInstall", "ObserveReconcile", "PlanReconcileAction",
+              "Seam::ButtonPackage", "Seam::RoundPackage", "Seam::SliderPackage"):
     assert_true(token in native_test, f"native transition tests do not cover the production reconcile policy: {token}")
+for transition in ("ClassifyIncoming", "PlanConstruction", "RecordInstall", "ObserveReconcile", "PlanReconcileAction"):
+    assert_true(f"caml_replacement::{transition}(" in REPLACEMENT,
+                f"adapter does not delegate to the production transition {transition}")
+    assert_true(transition in REPLACEMENT_CORE, f"shared policy does not define the production transition {transition}")
 assert_true("weakObjectsHashTable" in REPLACEMENT and "allObjects" in REPLACEMENT,
             "package consumers are not tracked weakly for their lifetimes")
 for key in ('@"identifier"', '@"original"', '@"applied"', '@"appliedTheme"'):
     assert_true(key in REPLACEMENT, f"package recovery state is not identity-aware: missing {key}")
 assert_true("plampy.packageOverride" in REPLACEMENT and "plampy.packageSeam" in REPLACEMENT,
             "package recovery state is not association-scoped to the consumer")
+assert_true("plampy.packageOwnedReplacement" in REPLACEMENT
+            and "objc_setAssociatedObject(replacement, kPackageOwnedKey" in REPLACEMENT
+            and "ObjCDescriptionOwned" in REPLACEMENT,
+            "constructed replacements are not marked owned for incoming classification")
 assert_true("CAMLRecordPackageInstall" in REPLACEMENT and "CAMLReconcilePackageConsumers" in REPLACEMENT,
             "ARC module does not own the install record and reconcile pass")
 assert_true("ReadInstalledDescription(consumer, &probe)" in REPLACEMENT,
             "factory does not require a verified recovery read-back before taking ownership of stock")
-assert_true("SameDescription" in REPLACEMENT and "ClassifyInstall" in REPLACEMENT and "DecideReconcile" in REPLACEMENT,
+assert_true("SameDescription" in REPLACEMENT and "ClassifyInstall" in REPLACEMENT_CORE
+            and "DecideReconcile" in REPLACEMENT_CORE,
             "reconcile does not run the production classification and decision policy")
+assert_true("kind == IncomingKind::NewStock" in REPLACEMENT_CORE and "input.prior.original" in REPLACEMENT_CORE,
+            "recording does not limit stock adoption to genuinely newer stock")
+assert_true("weak-lifetime" in native_test and "not executed on this host" in native_test,
+            "native tests overclaim Foundation weak-lifetime proof for consumer destruction")
 assert_true("CAMLInvokeOriginalPackage(seam, consumer" in REPLACEMENT,
             "reconcile does not invoke setters through the original-IMP slots")
 assert_true("NSThread isMainThread" in REPLACEMENT and "dispatch_async(dispatch_get_main_queue()" in REPLACEMENT,

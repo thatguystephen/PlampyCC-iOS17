@@ -14,12 +14,19 @@
 //   description passes through untouched) or a +1 replacement that must be
 //   released exactly once after the original setter invocation (MRR
 //   CAMLReleaseReplacement in the shim; ARC scope-end inside the reconcile
-//   pass).
-// - The borrowed incoming stock description is never released or mutated; no
+//   pass). It classifies the input first: an already-owned replacement is
+//   never treated as stock (it is kept as-is while current, or rebuilt from
+//   the preserved real-stock original), and every constructed replacement
+//   carries the owned-marker association.
+// - The borrowed incoming description is never released or mutated; no
 //   private URL ivar is ever read or written.
 // - CAMLRecordPackageInstall copies (retains) what it needs synchronously
 //   before returning, so the shim may release the replacement immediately
-//   afterwards even when the record hop defers to the main thread.
+//   afterwards even when the record hop defers to the main thread. The
+//   `incomingDescription` is whatever the caller passed to the setter — stock
+//   OR one of our own owned replacements — and is classified against the
+//   recorded owned/applied state before recording; only genuinely newer stock
+//   is adopted as the recovery original.
 #ifdef __OBJC__
 
 // C linkage on every boundary entry point: the definitions in
@@ -33,20 +40,25 @@ extern "C" {
 // +1 replacement or nil. `consumer` must support the verified
 // glyphPackageDescription recovery read-back; otherwise this fails open so an
 // unrecoverable override is never installed. `description` is the borrowed
-// stock description used only to derive the package name.
+// setter input (genuine stock or one of our own owned replacements) used to
+// derive the package name — from the preserved real-stock original when the
+// input is already owned.
 id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
                                     __unsafe_unretained id description,
                                     bool sliderSite)
     __attribute__((ns_returns_retained));
 
 // Called by the shim exactly once after the original setter invocation with
-// the borrowed stock description, the object actually installed (the
-// replacement or the stock description itself), and whether that object is an
-// owned replacement. Records the newest stock/applied distinction in the weak
-// consumer registry for later main-thread reconciliation. Seam is
-// caml_replacement::Seam's integer value.
+// the borrowed incoming description (stock or an owned replacement being
+// re-assigned), the object actually installed (the replacement or the input
+// description itself), and whether that object is a freshly constructed owned
+// replacement. Records the classified stock/applied distinction in the weak
+// consumer registry for later main-thread reconciliation: the preserved real
+// stock original survives owned re-assignments (even failed reconstruction),
+// and ownership is dropped only when genuine stock actually replaces our
+// replacement. Seam is caml_replacement::Seam's integer value.
 void CAMLRecordPackageInstall(__unsafe_unretained id consumer,
-                              __unsafe_unretained id stockDescription,
+                              __unsafe_unretained id incomingDescription,
                               __unsafe_unretained id installedDescription,
                               bool installedOwned, int seam);
 

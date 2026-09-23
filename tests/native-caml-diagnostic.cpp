@@ -166,12 +166,15 @@ static void TestAtomicFaultBoundary() {
 // SP1: live preference reconciliation across the three verified setter seams.
 // Production-coupled: drives the same decision helpers the ARC reconcile pass
 // runs (ClassifyInstall/DecideReconcile) and the same routing map the factory
-// attempts (BundleDirectoryForPackage through RoutingSiteFor).
+// attempts (BundleDirectoryForPackage through RoutingSiteFor). The stateful
+// record/reconcile transitions themselves are exercised in
+// TestPackageRecoveryTransitions below against the production policy.
 //
 // Consumer destruction is a registry-lifetime property rather than a decision:
 // the weak NSHashTable drops destroyed consumers before the pass ever gathers
-// facts, so destruction yields "no facts, no action" (asserted at model level
-// in tests/static-check.ts together with the weak-registry source contract).
+// facts, so destruction yields "no facts, no action" (structural contract in
+// tests/static-check.ts and tests/caml-diagnostic-contract.py; Foundation
+// weak-lifetime behavior is not executed on this host).
 static void TestPackageReconcileTransitions() {
     using namespace caml_replacement;
     // Read-back classification distinguishes owned/applied replacements from
@@ -232,6 +235,284 @@ static void TestPackageReconcileTransitions() {
     assert(DecideReconcile({true, false, InstallObservation::OwnedReplacement, false}) == ReconcileAction::RestoreStock);
 }
 
+// ---- SP1-R1/SP1-R2: stateful owned-description recovery transitions ----
+//
+// These drive the PRODUCTION transitions (the exact caml_replacement functions
+// src/CAMLReplacement.xm delegates to) over opaque description handles with
+// injected boundaries: identity equality, the owned-marker predicate that
+// mirrors the adapter's marker on constructed replacements, and a fake
+// factory/setter pair. Assertions are on handle IDENTITY (original and
+// preserved-original object identity), not just decision enums, so owned
+// re-assignment can never silently lose the real stock object again.
+//
+// Honest limitation: this is policy-level coverage over opaque handles.
+// Foundation object lifetimes (associated-object teardown, NSHashTable weak
+// zeroing on consumer destruction) are NOT executed on this host and no
+// weak-lifetime proof is claimed from this model; the destruction boundary is
+// structural in the adapter (weak registry + association-scoped records) and
+// source-checked in tests/static-check.ts and tests/caml-diagnostic-contract.py.
+// What is asserted here is the policy-level destruction contract: a consumer
+// with no record and nothing installed produces no setter invocation and keeps
+// no record from which a stale restore could be resurrected.
+namespace {
+
+using caml_replacement::DescriptionHandle;
+
+struct FakeDescription {
+    const char *stem;
+    int tag;
+};
+
+// Stand-in description identities. S1/S2 are genuine stock descriptions (never
+// marked owned); T1/T2/U1/U2 stand in for replacements the fake factory
+// constructs and marks, exactly like production output. T1Copy is a distinct
+// object equal to T1 by value (the adapter's isEqual: fallback case).
+FakeDescription S1 = {"WiFi", 1};
+FakeDescription S2 = {"WiFi", 2};
+FakeDescription T1 = {"WiFi", 11};
+FakeDescription T2 = {"WiFi", 12};
+FakeDescription U1 = {"WiFi", 21};
+FakeDescription U2 = {"WiFi", 22};
+FakeDescription T1Copy = {"WiFi", 13};
+
+DescriptionHandle H(const FakeDescription *description) {
+    return static_cast<DescriptionHandle>(description);
+}
+
+bool FakeEqual(DescriptionHandle left, DescriptionHandle right) { return left == right; }
+
+// Mirrors SameDescription's isEqual: fallback for the value-equality case.
+bool FakeValueEqual(DescriptionHandle left, DescriptionHandle right) {
+    if (left == right) return true;
+    if (!left || !right) return false;
+    return strcmp(static_cast<const FakeDescription *>(left)->stem,
+                  static_cast<const FakeDescription *>(right)->stem) == 0;
+}
+
+// The owned-marker predicate: the fakes the factory "constructs" are marked
+// for good, exactly like the marker association production sets on its output.
+bool FakeOwned(DescriptionHandle handle) {
+    return handle == H(&T1) || handle == H(&T2) || handle == H(&U1) || handle == H(&U2);
+}
+
+// Fake consumer: the shim's install path and the ARC reconcile pass sequenced
+// exactly as src/CAMLReplacement.xm sequences them, with only the boundaries
+// faked (construction result, original setter storage). All classification,
+// recording and planning is the production policy.
+struct FakeConsumer {
+    bool hasState = false;
+    caml_replacement::RecoveryState state = caml_replacement::NoRecoveryState();
+    DescriptionHandle installed = nullptr; // glyphPackageDescription read-back result
+    int seam = 0;
+    int theme = 0;
+
+    DescriptionHandle Install(DescriptionHandle incoming, DescriptionHandle factoryResult) {
+        caml_replacement::ConstructionPlan construction = caml_replacement::PlanConstruction(
+            state, hasState, incoming, theme, FakeEqual, FakeOwned);
+        DescriptionHandle replacement = construction.keepOwned ? nullptr : factoryResult;
+        DescriptionHandle argument = replacement ? replacement : incoming;
+        installed = argument; // the fake original setter stores its argument
+        state = caml_replacement::RecordInstall(
+            caml_replacement::InstallInput{state, hasState, incoming, argument,
+                                           replacement != nullptr, theme, seam},
+            FakeEqual, FakeOwned);
+        hasState = true;
+        return argument;
+    }
+
+    caml_replacement::ReconcilePlan Reconcile(bool enabled, DescriptionHandle desired) {
+        caml_replacement::ReconcileObservation observed = caml_replacement::ObserveReconcile(
+            state, hasState, installed, installed != nullptr, FakeEqual);
+        caml_replacement::ReconcilePlan plan = caml_replacement::PlanReconcileAction(
+            observed.base, observed.kind, installed, enabled, desired, theme, seam, FakeEqual);
+        if (plan.perform) installed = plan.invoke; // the fake original setter
+        if (plan.clear) {
+            state = caml_replacement::NoRecoveryState();
+            hasState = false;
+        } else {
+            state = plan.next;
+            hasState = true;
+        }
+        return plan;
+    }
+};
+
+} // namespace
+
+static void TestPackageRecoveryTransitions() {
+    using namespace caml_replacement;
+    // Construction-side classification: what the factory builds from, and when
+    // an owned input is kept as-is instead of rebuilt.
+    {
+        RecoveryState owned{H(&S1), H(&T1), 0};
+        ConstructionPlan plan = PlanConstruction(owned, true, H(&S1), 0, FakeEqual, FakeOwned);
+        assert(!plan.keepOwned && plan.source == H(&S1)); // stock input builds from itself
+        plan = PlanConstruction(owned, true, H(&T1), 0, FakeEqual, FakeOwned);
+        assert(plan.keepOwned && plan.source == H(&S1)); // current owned input is kept
+        plan = PlanConstruction(owned, true, H(&T1), 1, FakeEqual, FakeOwned);
+        assert(!plan.keepOwned && plan.source == H(&S1)); // theme change rebuilds from S1
+        plan = PlanConstruction(owned, true, H(&U2), 0, FakeEqual, FakeOwned);
+        assert(!plan.keepOwned && plan.source == H(&S1)); // stale owned input still from S1
+        plan = PlanConstruction(NoRecoveryState(), false, H(&S1), 0, FakeEqual, FakeOwned);
+        assert(!plan.keepOwned && plan.source == H(&S1));
+        plan = PlanConstruction(NoRecoveryState(), false, H(&T1), 0, FakeEqual, FakeOwned);
+        assert(!plan.keepOwned && plan.source == H(&T1)); // owned without record: not stock
+        assert(ClassifyIncoming(NoRecoveryState(), false, H(&T1), FakeEqual, FakeOwned) ==
+               IncomingKind::OwnedReplacement);
+        assert(ClassifyIncoming(NoRecoveryState(), false, H(&S2), FakeEqual, FakeOwned) ==
+               IncomingKind::NewStock);
+        // Value equality (the adapter's isEqual: fallback) classifies a
+        // distinct but equal object as the owned replacement as well.
+        assert(ClassifyIncoming(owned, true, H(&T1Copy), FakeValueEqual, FakeOwned) ==
+               IncomingKind::OwnedReplacement);
+        RecoveryState next = RecordInstall(
+            InstallInput{owned, true, H(&T1Copy), H(&U1), true, 1, 0}, FakeValueEqual, FakeOwned);
+        assert(next.original == H(&S1) && next.applied == H(&U1) && next.appliedTheme == 1);
+    }
+
+    const int seams[] = {(int)Seam::ButtonPackage, (int)Seam::RoundPackage,
+                         (int)Seam::SliderPackage};
+    for (int seam : seams) {
+        // SP1-R1 regression: owned re-assignment preserves the real stock.
+        // S1->T1 owned install, then T1 re-assigned through the same seam
+        // (kept as-is while current, rebuilt as U1 after a theme change);
+        // disable must restore S1 — never a themed description.
+        {
+            FakeConsumer h; h.seam = seam;
+            assert(h.Install(H(&S1), H(&T1)) == H(&T1));
+            assert(h.state.original == H(&S1) && h.state.applied == H(&T1));
+            assert(h.Install(H(&T1), nullptr) == H(&T1)); // keep-owned re-assignment
+            assert(h.state.original == H(&S1) && h.state.applied == H(&T1));
+            h.theme = 1;
+            assert(h.Install(H(&T1), H(&U1)) == H(&U1)); // rebuild for the new theme
+            assert(h.state.original == H(&S1));          // S1 preserved — never T1
+            assert(h.state.applied == H(&U1) && h.state.appliedTheme == 1);
+            ReconcilePlan plan = h.Reconcile(false, nullptr); // disable
+            assert(plan.action == ReconcileAction::RestoreStock);
+            assert(plan.seam == seam && plan.perform && plan.invoke == H(&S1));
+            assert(plan.clear && h.installed == H(&S1));
+        }
+        // SP1-R1 regression: a reconstruction miss on an owned re-assignment
+        // must not drop ownership — disable still restores the real stock.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1));
+            h.Install(H(&T1), nullptr); // factory/resource miss: T1 passes through
+            assert(h.state.original == H(&S1) && h.state.applied == H(&T1));
+            assert(h.state.appliedTheme == 0);
+            ReconcilePlan plan = h.Reconcile(false, nullptr);
+            assert(plan.action == ReconcileAction::RestoreStock && plan.invoke == H(&S1));
+        }
+        // SP1-R1 regression: owned re-assignment followed by a missing
+        // resource restores the real stock rather than keeping the override.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1));
+            h.theme = 1;
+            h.Install(H(&T1), H(&U1));
+            ReconcilePlan plan = h.Reconcile(true, nullptr); // enabled, resource miss
+            assert(plan.action == ReconcileAction::RestoreStock && plan.invoke == H(&S1));
+        }
+        // SP1-R1 regression: owned re-assignment followed by a theme change
+        // swaps the replacement (preserving the original), and disable then
+        // restores the real stock.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1));
+            h.theme = 1;
+            ReconcilePlan plan = h.Reconcile(true, H(&U2)); // Plampy -> Pulsar
+            assert(plan.action == ReconcileAction::ApplyReplacement && plan.invoke == H(&U2));
+            assert(h.state.original == H(&S1) && h.state.applied == H(&U2));
+            assert(h.state.appliedTheme == 1);
+            plan = h.Reconcile(false, nullptr);
+            assert(plan.invoke == H(&S1));
+        }
+        // Genuinely newer stock (including through the seam) is adopted as the
+        // recovery original and never overwritten; ownership follows reality.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1));
+            h.Install(H(&S2), H(&T2)); // newer stock S2 through the seam
+            assert(h.state.original == H(&S2) && h.state.applied == H(&T2));
+            ReconcilePlan plan = h.Reconcile(false, nullptr);
+            assert(plan.invoke == H(&S2)); // restores the newer stock
+            FakeConsumer g; g.seam = seam;
+            g.Install(H(&S1), H(&T1));
+            g.Install(H(&S2), nullptr); // newer stock passes through on a miss
+            assert(g.state.original == H(&S2) && g.state.applied == nullptr);
+            ReconcilePlan p2 = g.Reconcile(false, nullptr);
+            assert(p2.action == ReconcileAction::KeepInstalled && !p2.perform);
+            assert(g.installed == H(&S2));
+        }
+        // Disabled startup leaves stock untouched; enabling themes the
+        // preserved stock under its own identity.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), nullptr); // disabled: stock passes through
+            assert(h.state.original == H(&S1) && h.state.applied == nullptr);
+            ReconcilePlan plan = h.Reconcile(false, nullptr);
+            assert(plan.action == ReconcileAction::KeepInstalled && !plan.perform);
+            plan = h.Reconcile(true, H(&T1));
+            assert(plan.action == ReconcileAction::ApplyReplacement && plan.invoke == H(&T1));
+            assert(h.state.original == H(&S1) && h.state.applied == H(&T1));
+        }
+        // Disable restores the preserved stock and clears ownership; re-enable
+        // re-themes the restored stock under its own identity again.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1));
+            ReconcilePlan plan = h.Reconcile(false, nullptr);
+            assert(plan.action == ReconcileAction::RestoreStock && plan.invoke == H(&S1));
+            plan = h.Reconcile(true, H(&T2));
+            assert(plan.action == ReconcileAction::ApplyReplacement && plan.invoke == H(&T2));
+            assert(h.state.original == H(&S1) && h.state.applied == H(&T2));
+        }
+        // A stale owned replacement re-assigned later (marker-owned, record
+        // already on another replacement or gone) is never "genuinely newer
+        // stock": it never becomes the recovery original.
+        {
+            FakeConsumer h; h.seam = seam;
+            h.Install(H(&S1), H(&T1));
+            h.theme = 1;
+            h.Install(H(&T1), H(&U1)); // (S1, U1, 1)
+            h.Install(H(&T1), H(&U2)); // stale T1 re-assigned
+            assert(h.state.original == H(&S1)); // T1 never recorded as stock
+            assert(h.state.applied == H(&U2));
+            ReconcilePlan plan = h.Reconcile(false, nullptr);
+            assert(plan.invoke == H(&S1));
+            FakeConsumer g; g.seam = seam;
+            g.Install(H(&T1), nullptr); // marked input with no record at all
+            assert(g.state.original == nullptr); // fail open: no stock is known
+            assert(g.state.applied == H(&T1));   // ownership not silently dropped
+            ReconcilePlan p2 = g.Reconcile(false, nullptr);
+            // Owned with unknown original: fail open, keep installed, and never
+            // "restore" a themed description as stock.
+            assert(p2.action == ReconcileAction::KeepInstalled && !p2.perform);
+            assert(g.installed == H(&T1) && g.state.applied == H(&T1));
+        }
+        // Destruction boundary (policy level, honest): consumer destruction
+        // releases the record and drops the weak-registry entry before any
+        // pass — that teardown is Foundation runtime behavior NOT executed on
+        // this host, and no weak-lifetime proof is claimed from this model.
+        // Policy contract: with no record and nothing installed (or the
+        // description gone), the production transitions issue no setter
+        // invocation, clear the record, and cannot resurrect a stale restore.
+        {
+            FakeConsumer h; h.seam = seam;
+            ReconcilePlan plan = h.Reconcile(true, H(&T1));
+            assert(!plan.perform && plan.clear && plan.seam == seam);
+            assert(h.state.original == nullptr && h.state.applied == nullptr);
+            assert(ObserveReconcile(NoRecoveryState(), false, nullptr, false, FakeEqual).kind ==
+                   InstallObservation::NoDescription);
+            FakeConsumer g; g.seam = seam;
+            g.Install(H(&S1), H(&T1));
+            g.installed = nullptr; // the consumer's description is gone
+            plan = g.Reconcile(true, H(&T1));
+            assert(!plan.perform && plan.clear);
+        }
+    }
+}
+
 int main() {
     TestApprovedValues();
     TestDedupPolicy();
@@ -241,5 +522,6 @@ int main() {
     TestReplacementRouting();
     TestAtomicFaultBoundary();
     TestPackageReconcileTransitions();
+    TestPackageRecoveryTransitions();
     return 0;
 }
