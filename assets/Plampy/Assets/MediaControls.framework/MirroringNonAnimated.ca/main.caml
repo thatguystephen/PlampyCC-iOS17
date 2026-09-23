@@ -7,11 +7,11 @@ Copyrighted by YangJiii ( @duongduong0908 ) and しまりん ( @straight_tamago 
 		<sublayers>
 			<CALayer id="#1" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/jb/var/mobile/Library/Application Support/PlampyCC/Plampy/Icon/pcmh.png"/>
+					src="/var/jb/Library/Application Support/PlampyCC/Plampy/Icon/pcmh.png"/>
 			</CALayer>
 			<CALayer id="#2" bounds="0 0 40 40" position="0 0">
 				<contents type="CGImage"
-					src="/var/jb/var/mobile/Library/Application Support/PlampyCC/Plampy/Icon/pcmh.png"/>
+					src="/var/jb/Library/Application Support/PlampyCC/Plampy/Icon/pcmh.png"/>
 			</CALayer>
 		</sublayers>
 		<states>

@@ -53,12 +53,12 @@ assert_true("@try" not in HOOKS and "objc_msgSend" not in HOOKS and "respondsToS
 assert_true("CAMLDiagnosticPrimitiveAdmission(false)" in HOOKS and "CAMLDiagnosticPrimitiveAdmission(true)" in HOOKS, "hooks do not use primitive admission")
 
 hooks = {
-    "CAMLButtonPackageHook": ("ObservePackage(self, description, \"button-view\")", "gOriginalButtonPackage)(self, cmd, argument)"),
-    "CAMLRoundPackageHook": ("ObservePackage(self, description, \"round-button\")", "gOriginalRoundPackage)(self, cmd, argument)"),
-    "CAMLSliderPackageHook": ("ObservePackage(self, description, \"slider-view\")", "gOriginalSliderPackage)(self, cmd, argument)"),
+    "CAMLButtonPackageHook": ("ObservePackage(self, description, \"button-package\")", "gOriginalButtonPackage)(self, cmd, argument)"),
+    "CAMLRoundPackageHook": ("ObservePackage(self, description, \"round-package\")", "gOriginalRoundPackage)(self, cmd, argument)"),
+    "CAMLSliderPackageHook": ("ObservePackage(self, description, \"slider-package\")", "gOriginalSliderPackage)(self, cmd, argument)"),
     "CAMLFactoryHook": ("ObserveFactory(packageName)", "gOriginalFactory)(self, cmd, packageName, bundle)"),
-    "CAMLButtonStateHook": ("ObserveState(self, state, \"glyph-state\")", "gOriginalButtonState)(self, cmd, state)"),
-    "CAMLSliderStateHook": ("ObserveState(self, state, \"glyph-state\")", "gOriginalSliderState)(self, cmd, state)"),
+    "CAMLButtonStateHook": ("ObserveState(self, state, \"button-state\")", "gOriginalButtonState)(self, cmd, state)"),
+    "CAMLSliderStateHook": ("ObserveState(self, state, \"slider-state\")", "gOriginalSliderState)(self, cmd, state)"),
 }
 for name, (observer, original) in hooks.items():
     body = function_body(HOOKS, name)
@@ -66,6 +66,16 @@ for name, (observer, original) in hooks.items():
     assert_true(body.count(original) == 1, f"{name} original call is not exactly once")
     assert_true(body.index(observer) < body.index(original), f"{name} does not preserve observe-before-pass-through ordering")
     assert_true("@" not in body, f"{name} uses Objective-C ownership/message syntax before the boundary")
+
+low_power_body = function_body(HOOKS, "CAMLLowPowerDescriptionHook")
+assert_true(low_power_body.count("gOriginalLowPowerDescription") == 2, "Low Power getter does not guard and invoke its exact original slot")
+assert_true(low_power_body.count("ObservePackage(self, description, \"controller\")") == 1, "Low Power getter observer is not exactly once")
+assert_true("CAMLCreateReplacementDescription" not in low_power_body and "CAMLRecordPackageInstall" not in low_power_body,
+            "Low Power diagnostic seam must remain observer-only")
+assert_true(low_power_body.index("gOriginalLowPowerDescription") < low_power_body.index("ObservePackage"),
+            "Low Power getter does not observe the exact stock result")
+assert_true('"CCUILowPowerModuleViewController", "glyphPackageDescription"' in SOURCE,
+            "verified 21D50 Low Power getter descriptor is absent")
 
 # The three package setters run the verified construct-and-pass route between
 # observation and the original call: the ARC-side factory returns a +1
@@ -124,8 +134,9 @@ assert_true("ns_returns_retained" in REPLACEMENT and "@try" in REPLACEMENT and "
             "replacement factory lacks the guarded fail-open boundary")
 assert_true(10 <= REPLACEMENT.count("return nil"), "replacement factory does not fail open on every miss")
 assert_true("initWithPackageName:name inBundle:bundle" in REPLACEMENT, "replacement factory does not use the verified initializer route")
-assert_true("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")" in REPLACEMENT,
-            "replacement factory does not use the rooted logical theme root")
+assert_true("ROOT_PATH_NS(@\"/Library/Application Support/PlampyCC\")" in REPLACEMENT
+            and "ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")" in REPLACEMENT,
+            "replacement factory does not use the primary rooted theme path with bounded legacy fallback")
 assert_true("CAMLVerifiedABI.h" in REPLACEMENT and "initWithPackageName:inBundle:" in VERIFIED_ABI
             and "packageURL" in VERIFIED_ABI and "0x1d308a228" in VERIFIED_ABI,
             "verified ABI declarations are missing or unreferenced")
@@ -207,8 +218,9 @@ assert_true(not class_defs, "CAMLDiagnostic.xm still owns replacement IMP bodies
 # The guarded observer is an ARC-owned body boundary. Only it may message
 # objects, catch Objective-C exceptions, and touch the diagnostic ring.
 primitive = function_body(SOURCE, "CAMLDiagnosticPrimitiveAdmission")
-for predicate in ("gInDiagnosticObserver", "gLoggingDisabled", "gDiagnosticEnabled", "gDiagnosticVerbose"):
+for predicate in ("gInDiagnosticObserver", "gLoggingDisabled", "kDiagnosticCompileEnabled", "gDiagnosticVerbose"):
     assert_true(predicate in primitive, f"primitive admission omits {predicate}")
+assert_true("gDiagnosticEnabled" not in primitive, "runtime diagnostic preference can enable recording in a release build")
 assert_true("no message send, retain, allocation, logging, or filesystem operation" in SOURCE, "primitive boundary is undocumented")
 run = function_body(SOURCE, "RunObserver")
 assert_true(run.index("BeginObserver(verboseOnly)") < run.index("entered = true") < run.index("body(context)"), "observer body can run before admission")
@@ -221,7 +233,7 @@ assert_true("__unsafe_unretained id" in SOURCE and "CAMLPackageContext" in SOURC
 # Descriptor installation stays POD and deterministic, while replacements are
 # supplied by the new shim rather than dynamically initialized hook storage.
 rows = re.findall(r'sites\[(\d+)\]\s*=\s*\{\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*\(IMP\)(\w+),\s*&\w+,\s*(true|false)', SOURCE)
-assert_true(len(rows) == 6, "deterministic six-site descriptor table is incomplete")
+assert_true(len(rows) == 7, "deterministic seven-site descriptor table is incomplete")
 assert_true("gSites" not in SOURCE and "gDiagnosticInstalledMask" not in SOURCE, "legacy dynamic descriptor state remains")
 assert_true("RecordInstallStatus(&sites[index], succeeded)" in SOURCE, "installation truth is not recorded from the actual result")
 assert_true("MSHookMessageEx" in function_body(SOURCE, "InstallSite"), "runtime installer does not use the declared hook boundary")

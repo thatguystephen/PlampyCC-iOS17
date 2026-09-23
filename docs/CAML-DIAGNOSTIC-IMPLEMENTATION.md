@@ -4,7 +4,7 @@ Status: observer implementation plus the bounded, verified 21D50 construct-and-p
 
 ## Hook list
 
-The diagnostic is split into three explicit boundaries: `src/CAMLDiagnosticHooks.mm` contains the six replacement IMPs and is compiled with ARC disabled; `src/CAMLDiagnostic.xm` owns ARC observer bodies and install-once descriptors; `src/CAMLDiagnosticCore.hpp` and `src/CAMLDiagnosticIO.hpp` contain the portable policies and injected Darwin syscall adapter. The observer module constructs six POD descriptors synchronously inside the process constructor, then installs each PAC-safe `MSHookMessageEx` observer once after class, selector, and runtime ABI checks:
+The diagnostic is split into three explicit boundaries: `src/CAMLDiagnosticHooks.mm` contains the seven replacement IMPs and is compiled with ARC disabled; `src/CAMLDiagnostic.xm` owns ARC observer bodies and install-once descriptors; `src/CAMLDiagnosticCore.hpp` and `src/CAMLDiagnosticIO.hpp` contain the portable policies and injected Darwin syscall adapter. The observer module constructs seven POD descriptors synchronously inside the process constructor, then installs each PAC-safe `MSHookMessageEx` observer once after class, selector, and runtime ABI checks:
 
 - `-[CCUIButtonModuleView setGlyphPackageDescription:]` — `v24@0:8@16`
 - `-[CCUIRoundButton setGlyphPackageDescription:]` — `v24@0:8@16`
@@ -12,6 +12,7 @@ The diagnostic is split into three explicit boundaries: `src/CAMLDiagnosticHooks
 - `+[CCUICAPackageDescription descriptionForPackageNamed:inBundle:]` — `@32@0:8@16@24`; observer body additionally requires `kDiagnosticVerbose`
 - `-[CCUIButtonModuleView setGlyphState:]` — `v24@0:8@16`
 - `-[CCUIBaseSliderView setGlyphState:]` — `v24@0:8@16`
+- `-[CCUILowPowerModuleViewController glyphPackageDescription]` — `@16@0:8`; observer-only verified 21D50 controller seam that returns the exact stock getter result unchanged
 
 Quoted Objective-C class annotations are normalized before ABI-shape comparison. A missing class, selector, or incompatible runtime encoding skips that site without changing the stock implementation. The constructor records truthful per-site installation results (`q` in the install event) rather than treating constructor completion as installation success. The existing functional `dismiss` hook calls the narrow `CAMLDiagnosticFlushAtDismiss()` interface after the original dismiss call; when diagnostics are disabled this is a no-op, so functional behavior remains unchanged. No route-context hook is included.
 
@@ -22,10 +23,10 @@ Live preference reconciliation extends the same construct-and-pass route across 
 ## Preferences
 
 - Domain: `com.misakaproject.plampyCC`
-- `kDiagnosticEnabled`: BOOL, default `NO`
+- `kDiagnosticEnabled`: legacy BOOL retained only for preference/schema compatibility; it does not enable a release binary
 - `kDiagnosticVerbose`: BOOL, default `NO`; gates factory events
 
-The hooks are installed once and are never dynamically unhooked or rehooked. `kDiagnosticEnabled` and `kDiagnosticVerbose` gate observer bodies; disabled and preference-transition paths are no-op observer paths. Preference changes refresh those atomic gates through the existing Darwin notification seam only; no preference writes occur from a hook. Logging failures disable diagnostics for the remainder of the process and the original IMP continues.
+The hooks are installed once and are never dynamically unhooked or rehooked. Event admission is controlled by the compile-time `PLAMPYCC_DIAGNOSTIC_BUILD` constant: `make ... DIAGNOSTIC=1` emits the temporary collector, while omission emits a release binary that can never record regardless of cfprefsd state. `kDiagnosticVerbose` remains the only runtime diagnostic gate and controls the high-volume factory observer in collector builds. Preference changes refresh verbosity through the existing Darwin notification seam only; no preference writes occur from a hook. Logging failures disable diagnostics for the remainder of the process and every original IMP continues.
 
 ## Log path and fixed schema
 
@@ -33,7 +34,7 @@ When enabled, bounded events are appended to the tweak-owned rootless path:
 
 `/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl`
 
-The directory is created with mode `0700`; the file is restricted to `0600`. Events use fixed compact JSON keys (`v` version, `t` monotonic milliseconds, `w` wall-clock seconds, `s` site, `p` package name, `x` path prefix, `n` description-is-new, `g` glyph state, `d` description class, `i` view tag, `a` ancestor class, `r` repeat, `q` per-site installation success, `b` build ID, `u` Mach-O UUID).
+The directory is created with mode `0700`; the file is restricted to `0600`. Events use fixed compact JSON keys (`v` version, `t` monotonic milliseconds, `w` wall-clock seconds, `s` site, `p` package name, `x` coarse path prefix, `n` description-is-new, `g` glyph state, `d` description class, `i` view tag, `a` ancestor class, `c` consumer class, `h` construction path, `f` source-URL form, `y` proposed-replacement-URL form, `o` load/rejection outcome, `r` repeat, `q` per-site installation success, `b` build ID, `u` Mach-O UUID).
 
 `x` is a coarse path classification (`private`, `var`, `app-container`, `Applications`, or `other`). Full paths, package URLs, CAML/XML contents, asset bytes, user data, and raw pointer values are never serialized. Package names, class names, and state strings are emitted only when they exactly match the fixed approved-value allowlists; every other value becomes `unknown`, `unknown-class`, or `unknown-state`.
 
@@ -43,7 +44,7 @@ The in-memory ring contains at most 512 events. The shared `CAMLDiagnosticCore.h
 
 Source build ID: `plampycc-caml-observer-v1`.
 
-The install event records the build ID and the tweak Mach-O UUID discovered from the loaded image's `LC_UUID` command; ordinary events retain those fixed fields as empty values to stay within the 256-byte ceiling. The Apple Silicon workflow also records the exact source SHA, workflow run, Xcode version, pinned Theos revision, pinned SDK revision/name, package hashes, and unstripped symbol hashes in `dist/build-manifest.json` and `dist/SHA256SUMS`.
+The install event records the build ID and the tweak Mach-O UUID discovered from the loaded image's `LC_UUID` command; ordinary events retain those fixed fields as empty values. Each serialized event is capped at 384 bytes, and the ring remains fixed at 512 records (<192 KiB) with the existing session/file bounds. The Apple Silicon workflow also records the exact source SHA, workflow run, Xcode version, pinned Theos revision, pinned SDK revision/name, package hashes, and unstripped symbol hashes in `dist/build-manifest.json` and `dist/SHA256SUMS`.
 
 Final package signing follows the pinned toolchain exactly. Theos signs each linked binary at build time with `ldid -S` (`makefiles/instance/rules.mk` `_THEOS_CODESIGN_COMMANDLINE`, `TARGET_CODESIGN = ldid`, `TARGET_CODESIGN_FLAGS ?= -S` in `makefiles/targets/_common/darwin_head.mk`; the workflow greps these exact rules), and the release repack's in-place `strip -x` mutates code bytes and stale-invalidates that signature. The workflow therefore re-signs every final packaged Mach-O with `ldid -S` after stripping and before `dpkg-deb -b`, and nothing mutates the staged payload afterwards: each packaged Mach-O is byte-compared against the signed staged file, and `tests/signature-contract.py` recomputes CodeDirectory page and special-slot hashes over the shipped bytes (missing, stale, truncated, or partially hashed signatures fail) as both a build assertion and the artifact gate.
 

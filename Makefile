@@ -8,7 +8,16 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = PlampyCC
 PlampyCC_FILES = src/Tweak.xm src/CAMLDiagnostic.xm src/CAMLDiagnosticHooks.mm src/CAMLReplacement.xm
 PlampyCC_CFLAGS = -fobjc-arc -std=c++17 -Werror=return-type
-# The hook ABI is a borrowed-argument boundary. Keep the six replacement IMPs
+
+# Temporary diagnostic build (collector-specified): defines the compile-time
+# diagnostic constant so the bounded CAML recorder can record independently of
+# cfprefsd, and marks the recorder build ID with "-ct" in the evidence. The
+# default build is release-correct and can never record. Verbose settings stay
+# collectible at runtime. See docs/CAML-DIAGNOSTIC-IMPLEMENTATION.md.
+ifeq ($(DIAGNOSTIC),1)
+PlampyCC_CFLAGS += -DPLAMPYCC_DIAGNOSTIC_BUILD=1
+endif
+# The hook ABI is a borrowed-argument boundary. Keep the seven replacement IMPs
 # in a dedicated translation unit and make ARC failure a compile-time error.
 # The three package IMPs additionally call the ARC-side CAML factory and own
 # the single post-original release of its +1 result.

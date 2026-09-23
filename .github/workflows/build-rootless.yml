@@ -65,7 +65,9 @@ jobs:
           # Build the exact release binary once without stripping. The package is
           # then copied, stripped in place, and repacked so UUIDs and function
           # starts remain identical between each companion and final slice.
-          make clean package FINALPACKAGE=1 STRIP=0 THEOS_PACKAGE_SCHEME=rootless
+          # This task intentionally emits the temporary diagnostic collector;
+          # omission of DIAGNOSTIC=1 remains the release-mode proof path.
+          make clean package FINALPACKAGE=1 STRIP=0 DIAGNOSTIC=1 THEOS_PACKAGE_SCHEME=rootless
           rm -rf dist
           mkdir -p dist/packages dist/symbols/arm64 dist/symbols/arm64e "$RUNNER_TEMP/plampycc-package"
           source_package="$(find packages -type f -name '*.deb' -print -quit)"
@@ -95,6 +97,17 @@ jobs:
             done
             strip -x "$source_binary"
           done
+          # Normalize package metadata after all byte mutations. iOS expects
+          # root:wheel (numeric 0:0), traversable directories, readable data,
+          # and executable Mach-O payloads; do not inherit runner ownership.
+          find "$RUNNER_TEMP/plampycc-package" -type d -exec chmod 0755 {} +
+          find "$RUNNER_TEMP/plampycc-package" -type f -exec chmod 0644 {} +
+          while IFS= read -r staged_file; do
+            if file -b "$staged_file" | grep -q 'Mach-O'; then chmod 0755 "$staged_file"; fi
+          done < <(find "$RUNNER_TEMP/plampycc-package" -type f | sort)
+          for script in preinst postinst prerm postrm config; do
+            test ! -f "$RUNNER_TEMP/plampycc-package/DEBIAN/$script" || chmod 0755 "$RUNNER_TEMP/plampycc-package/DEBIAN/$script"
+          done
           # strip -x above invalidates the build-time signature (the pinned
           # Theos signs every linked binary with ldid -S through
           # _THEOS_CODESIGN_COMMANDLINE). Re-sign every final staged Mach-O
@@ -108,6 +121,9 @@ jobs:
             fi
           done < <(find "$RUNNER_TEMP/plampycc-package" -type f | sort)
           test -s "$RUNNER_TEMP/plampycc-signed.txt"
+          # Ownership is metadata-only, so normalize it after final signing and
+          # immediately before repacking without changing signed bytes.
+          sudo chown -R 0:0 "$RUNNER_TEMP/plampycc-package"
           test "$(find dist/symbols -type f | wc -l | tr -d ' ')" -eq 4
           dpkg-deb -b "$RUNNER_TEMP/plampycc-package" "dist/packages/$(basename "$source_package")"
           test "$(find dist/packages -type f -name '*.deb' | wc -l | tr -d ' ')" -eq 1

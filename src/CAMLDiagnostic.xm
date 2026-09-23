@@ -22,23 +22,39 @@
 #include <string.h>
 #include "CAMLDiagnosticCore.hpp"
 #include "CAMLDiagnosticIO.hpp"
+#include "CAMLReplacementCore.hpp"
+#import "PlampyCCState.h"
 
 static const char kDiagnosticPrefsDomain[] = "com.misakaproject.plampyCC";
 static CFStringRef const kDiagnosticPrefsChanged = CFSTR("com.misakaproject.plampyCC.settingsChanged");
-static const char kDiagnosticEnabledKey[] = "kDiagnosticEnabled";
 static const char kDiagnosticVerboseKey[] = "kDiagnosticVerbose";
-static const char kDiagnosticBuildId[] = "plampycc-caml-observer-v1";
+#if defined(PLAMPYCC_DIAGNOSTIC_BUILD)
+// Collector build: the bounded recorder is compiled in and records by default.
+// This compile-time constant is what supersedes cfprefsd: recording cannot be
+// lost to a preference read failure, a preference reset, or a missing
+// diagnostic key (the functional kDiagnosticEnabled preference is superseded).
+static const bool kDiagnosticCompileEnabled = true;
+// Distinct build identifier so collector evidence is unambiguous about which
+// binary produced it (design contract section 5, requirement 3).
+static const char kDiagnosticBuildId[] = "plampycc-caml-observer-v2-diag";
+#else
+// Release build: the hook-and-record surface stays compiled and verified, but
+// the recorder is disabled by the compile-time constant — no preference state
+// can make a release binary record, and collector evidence can never come
+// from an ambiguous binary.
+static const bool kDiagnosticCompileEnabled = false;
+static const char kDiagnosticBuildId[] = "plampycc-caml-observer-v2";
+#endif
 static const char kDiagnosticEventFile[] = "events.jsonl";
 static const char kDiagnosticTempFile[] = "events.jsonl.tmp";
 
 extern caml_diag::SyscallAdapter gDarwinSyscalls;
-static constexpr size_t kDiagnosticSiteCount = 6;
+static constexpr size_t kDiagnosticSiteCount = 7;
 static constexpr size_t kRingCapacity = caml_diag::RingPolicy::kCapacity;
 static constexpr size_t kSerializedEventCapacity = caml_diag::RingPolicy::kSerializedEventCapacity;
 static constexpr size_t kDiagnosticPathCapacity = PATH_MAX;
 static constexpr size_t kDiagnosticRetentionBytes = 1024 * 1024;
 
-static std::atomic<bool> gDiagnosticEnabled(false);
 static std::atomic<bool> gDiagnosticVerbose(false);
 static std::atomic<bool> gLoggingDisabled(false);
 static std::atomic<uint64_t> gSessionEventCount(0);
@@ -56,6 +72,11 @@ struct CAMLDiagnosticEvent {
     char state[32];
     char descriptionClass[40];
     char ancestorClass[40];
+    char consumerClass[40];
+    char constructionPath[16];
+    char sourceURLForm[16];
+    char proposedURLForm[16];
+    char loadOutcome[16];
     int32_t viewTag;
     bool descriptionIsNew;
     bool installationRecord;
@@ -96,12 +117,14 @@ extern "C" IMP gOriginalSliderPackage;
 extern "C" IMP gOriginalFactory;
 extern "C" IMP gOriginalButtonState;
 extern "C" IMP gOriginalSliderState;
+extern "C" IMP gOriginalLowPowerDescription;
 extern "C" void CAMLButtonPackageHook(id, SEL, id);
 extern "C" void CAMLRoundPackageHook(id, SEL, id);
 extern "C" void CAMLSliderPackageHook(id, SEL, id);
 extern "C" id CAMLFactoryHook(id, SEL, id, id);
 extern "C" void CAMLButtonStateHook(id, SEL, id);
 extern "C" void CAMLSliderStateHook(id, SEL, id);
+extern "C" id CAMLLowPowerDescriptionHook(id, SEL);
 
 static uint64_t DiagnosticMonotonicMilliseconds(void) {
     static mach_timebase_info_data_t timebase = {};
@@ -225,7 +248,11 @@ private:
 };
 
 static NSString *DiagnosticOutputDirectory(void) {
-    return ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic");
+    NSString *primary = ROOT_PATH_NS(@"/Library/Application Support/PlampyCC/CAML-Diagnostic");
+    NSString *legacy = ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic");
+    BOOL primaryExists = access(primary.fileSystemRepresentation, F_OK) == 0;
+    BOOL legacyExists = access(legacy.fileSystemRepresentation, F_OK) == 0;
+    return primaryExists || !legacyExists ? primary : legacy;
 }
 
 static bool ValidateDirectoryFD(int descriptor, bool leaf) {
@@ -448,10 +475,13 @@ static void DisableLoggingForSession(void) {
 extern "C" bool CAMLDiagnosticPrimitiveAdmission(bool verboseOnly) {
     // This is the only pre-observer hook decision. It reads POD state only:
     // no message send, retain, allocation, logging, or filesystem operation.
-    return !gInDiagnosticObserver &&
-           !gLoggingDisabled.load(std::memory_order_acquire) &&
-           gDiagnosticEnabled.load(std::memory_order_acquire) &&
-           (!verboseOnly || gDiagnosticVerbose.load(std::memory_order_acquire));
+    return caml_diag::AdmitObserverBody({
+        gInDiagnosticObserver,
+        gLoggingDisabled.load(std::memory_order_acquire),
+        kDiagnosticCompileEnabled,
+        gDiagnosticVerbose.load(std::memory_order_acquire),
+        verboseOnly,
+    });
 }
 
 static bool BeginObserver(bool verboseOnly) {
@@ -511,6 +541,64 @@ static void CopyAncestorClass(id view, char *destination, size_t capacity) {
                                    caml_diag::ValueKind::Class);
 }
 
+static NSString *DiagnosticPackageStem(id description, NSURL **outURL) {
+    if (outURL) *outURL = nil;
+    if (!description || ![description respondsToSelector:@selector(packageURL)]) return nil;
+    id value = ((id(*)(id, SEL))objc_msgSend)(description, @selector(packageURL));
+    if (![value isKindOfClass:NSURL.class]) return nil;
+    if (outURL) *outURL = value;
+    return [[(NSURL *)value URLByDeletingPathExtension] lastPathComponent];
+}
+
+static bool DiagnosticReplacementResourceExists(NSString *name, const char *bundleDirectory) {
+    if (!name.length || !bundleDirectory) return false;
+    NSString *theme = PlampyCCThemeType() == 1 ? @"Pulsar" : @"Plampy";
+    NSArray<NSString *> *roots = @[
+        ROOT_PATH_NS(@"/Library/Application Support/PlampyCC"),
+        ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC")
+    ];
+    NSString *bundleLeaf = [NSString stringWithUTF8String:bundleDirectory];
+    for (NSString *root in roots) {
+        NSString *bundlePath = [[[[root stringByAppendingPathComponent:theme]
+                                  stringByAppendingPathComponent:@"Assets"]
+                                  stringByAppendingPathComponent:bundleLeaf] copy];
+        NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+        if ([bundle URLForResource:name withExtension:@"ca"]) return true;
+    }
+    return false;
+}
+
+static void CopyRouteDetails(const char *site, id view, id description,
+                             CAMLDiagnosticEvent *event) {
+    const char *construction = caml_diag::ConstructionPathForSite(site);
+    CopyFixedCString(event->constructionPath, sizeof(event->constructionPath), construction);
+    if (view) CopyApproved(event->consumerClass, sizeof(event->consumerClass),
+                           NSStringFromClass(object_getClass(view)), caml_diag::ValueKind::Class);
+
+    NSURL *sourceURL = nil;
+    NSString *name = DiagnosticPackageStem(description, &sourceURL);
+    const char *sourceForm = caml_diag::SourceURLForm(
+        description && [description respondsToSelector:@selector(packageURL)],
+        sourceURL != nil, sourceURL.isFileURL);
+    CopyFixedCString(event->sourceURLForm, sizeof(event->sourceURLForm), sourceForm);
+
+    bool loadSite = caml_diag::IsLoadClassificationPath(construction);
+    const char *bundleDirectory = nullptr;
+    if (loadSite && name.length && PlampyCCFunctionalEnabled()) {
+        caml_replacement::Site mappingSite = strcmp(construction, "slider") == 0
+                                                 ? caml_replacement::Site::Slider
+                                                 : caml_replacement::Site::Setter;
+        bundleDirectory = caml_replacement::BundleDirectoryForPackage(
+            name.UTF8String, mappingSite, PlampyCCThemeType());
+    }
+    bool proposed = bundleDirectory != nullptr;
+    bool resolved = proposed && DiagnosticReplacementResourceExists(name, bundleDirectory);
+    CopyFixedCString(event->proposedURLForm, sizeof(event->proposedURLForm),
+                     caml_diag::ProposedURLForm(proposed));
+    CopyFixedCString(event->loadOutcome, sizeof(event->loadOutcome),
+                     caml_diag::LoadOutcomeForEvidence(proposed, resolved));
+}
+
 static bool DescriptionIsNewLocked(id view, id description) {
     const void *viewPointer = (__bridge const void *)view;
     const void *descriptionPointer = (__bridge const void *)description;
@@ -551,11 +639,13 @@ static bool SerializeEvent(CAMLDiagnosticEvent *event) {
     uint64_t serializedMonotonic = event->monotonicMs % 10000000000000ULL;
     uint32_t serializedWall = event->wallSeconds > UINT32_MAX ? UINT32_MAX : (uint32_t)event->wallSeconds;
     int written = snprintf(event->serialized, sizeof(event->serialized),
-                           "{\"v\":1,\"t\":%llu,\"w\":%u,\"s\":\"%.12s\",\"p\":\"%.20s\",\"x\":\"%.12s\",\"n\":%d,\"g\":\"%.12s\",\"d\":\"%.20s\",\"i\":%d,\"a\":\"%.20s\",\"r\":%u,\"q\":%d,\"b\":\"%.25s\",\"u\":\"%.36s\"}\n",
+                           "{\"v\":1,\"t\":%llu,\"w\":%u,\"s\":\"%.12s\",\"p\":\"%.20s\",\"x\":\"%.12s\",\"n\":%d,\"g\":\"%.12s\",\"d\":\"%.20s\",\"i\":%d,\"a\":\"%.20s\",\"c\":\"%.20s\",\"h\":\"%.12s\",\"f\":\"%.12s\",\"y\":\"%.12s\",\"o\":\"%.12s\",\"r\":%u,\"q\":%d,\"b\":\"%.25s\",\"u\":\"%.36s\"}\n",
                            (unsigned long long)serializedMonotonic, serializedWall,
                            event->site, event->packageName, event->pathPrefix,
                            event->descriptionIsNew ? 1 : 0, event->state,
                            event->descriptionClass, event->viewTag, event->ancestorClass,
+                           event->consumerClass, event->constructionPath, event->sourceURLForm,
+                           event->proposedURLForm, event->loadOutcome,
                            event->repeat, event->installationSucceeded ? 1 : 0, buildId, uuid);
     return written > 0 && gRingPolicy.SerializedSizeFits((size_t)written);
 }
@@ -569,6 +659,9 @@ static void RecordEventBody(const char *site, id view, id description, id state,
     CopyFixedCString(event.site, sizeof(event.site), site);
     CopyPackageDetails(description, event.packageName, sizeof(event.packageName), event.pathPrefix,
                        sizeof(event.pathPrefix), event.descriptionClass, sizeof(event.descriptionClass));
+    if (!installationRecord) {
+        CopyRouteDetails(site, view, description, &event);
+    }
     if ([packageNameOverride isKindOfClass:[NSString class]])
         CopyApproved(event.packageName, sizeof(event.packageName), packageNameOverride,
                      caml_diag::ValueKind::Package);
@@ -710,6 +803,9 @@ extern "C" __attribute__((noinline, used)) size_t BuildCAMLDiagnosticSites(CAMLD
     sites[3] = { "CCUICAPackageDescription", "descriptionForPackageNamed:inBundle:", "@32@0:8@16@24", "factory", (IMP)CAMLFactoryHook, &gOriginalFactory, true };
     sites[4] = { "CCUIButtonModuleView", "setGlyphState:", "v24@0:8@16", "button-state", (IMP)CAMLButtonStateHook, &gOriginalButtonState, false };
     sites[5] = { "CCUIBaseSliderView", "setGlyphState:", "v24@0:8@16", "slider-state", (IMP)CAMLSliderStateHook, &gOriginalSliderState, false };
+    // Verified 21D50 module seam. Getter observation is deliberately read-only:
+    // it returns the exact stock result and never calls the replacement factory.
+    sites[6] = { "CCUILowPowerModuleViewController", "glyphPackageDescription", "@16@0:8", "controller", (IMP)CAMLLowPowerDescriptionHook, &gOriginalLowPowerDescription, false };
     return kDiagnosticSiteCount;
 }
 
@@ -724,10 +820,10 @@ static void RefreshDiagnosticPreferences(void) {
     @try {
         NSString *domain = [NSString stringWithUTF8String:kDiagnosticPrefsDomain];
         NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:domain];
-        gDiagnosticEnabled.store([preferences boolForKey:[NSString stringWithUTF8String:kDiagnosticEnabledKey]], std::memory_order_release);
+        // Recorder/release choice is compile-time; only verbosity remains a
+        // runtime preference in collector builds.
         gDiagnosticVerbose.store([preferences boolForKey:[NSString stringWithUTF8String:kDiagnosticVerboseKey]], std::memory_order_release);
     } @catch (...) {
-        gDiagnosticEnabled.store(false, std::memory_order_release);
         gDiagnosticVerbose.store(false, std::memory_order_release);
     }
 }

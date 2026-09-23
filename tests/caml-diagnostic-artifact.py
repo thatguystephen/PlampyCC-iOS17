@@ -31,6 +31,9 @@ EXPECTED_LITERALS = (
     "factory",
     "button-state",
     "slider-state",
+    "CCUILowPowerModuleViewController",
+    "glyphPackageDescription",
+    "controller",
     "DisplayModule.bundle",
     "MediaControls.framework",
     "TimerModule.bundle",
@@ -60,7 +63,7 @@ def source_order(source: str) -> None:
         raise SystemExit("production does not call the shared atomic/recovery policy")
     if "gDarwinSyscalls" not in source or "CAMLDiagnosticHooks.mm" in source:
         raise SystemExit("Darwin syscall adapter boundary is absent or hook shim leaked into observer source")
-    for name in ("CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook", "CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook"):
+    for name in ("CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook", "CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook", "CAMLLowPowerDescriptionHook"):
         if re.search(rf"\b{name}\s*\([^;]*\)\s*\{{", source):
             raise SystemExit(f"replacement IMP body remains in diagnostic source: {name}")
     walker = source[source.index("OpenDiagnosticDirectory"):source.index("ReadExistingEvents")]
@@ -103,10 +106,12 @@ def observer_instruction_ranges(symbols: str, disassembly: str) -> dict[str, str
 HOOK_NAMES = (
     "CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook",
     "CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook",
+    "CAMLLowPowerDescriptionHook",
 )
 ORIGINAL_SLOT_NAMES = (
     "gOriginalButtonPackage", "gOriginalRoundPackage", "gOriginalSliderPackage",
     "gOriginalFactory", "gOriginalButtonState", "gOriginalSliderState",
+    "gOriginalLowPowerDescription",
 )
 DESCRIPTOR_NAMES = ("BuildCAMLDiagnosticSites", "InstallCAMLDiagnosticSites")
 REPLACEMENT_BOUNDARY_NAMES = (
@@ -313,6 +318,13 @@ def extract_packaged_binaries(package: Path, destination: Path) -> dict[str, Pat
     extracted: dict[str, Path] = {}
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
         for member in archive.getmembers():
+            if member.uid != 0 or member.gid != 0:
+                raise SystemExit(f"{package}:{member.name}: payload owner is {member.uid}:{member.gid}, expected root:wheel (0:0)")
+            mode = member.mode & 0o7777
+            if mode & 0o022:
+                raise SystemExit(f"{package}:{member.name}: unsafe group/world-writable mode {mode:o}")
+            if member.isdir() and mode != 0o755:
+                raise SystemExit(f"{package}:{member.name}: directory mode is {mode:o}, expected 755")
             if not member.isfile():
                 continue
             handle = archive.extractfile(member)
@@ -320,7 +332,11 @@ def extract_packaged_binaries(package: Path, destination: Path) -> dict[str, Pat
                 continue
             blob = handle.read()
             if not signature_contract.is_macho(blob):
+                if mode != 0o644:
+                    raise SystemExit(f"{package}:{member.name}: data-file mode is {mode:o}, expected 644")
                 continue
+            if mode != 0o755:
+                raise SystemExit(f"{package}:{member.name}: Mach-O mode is {mode:o}, expected 755")
             leaf = Path(member.name).name
             if leaf in extracted:
                 raise SystemExit(f"{package}: packaged binary name {leaf} is ambiguous")

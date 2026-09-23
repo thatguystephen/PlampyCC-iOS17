@@ -2,9 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>entry</key><dict>
-  <key>bundle</key><string>PlampyCC.bundle</string>
+  <key>bundle</key><string>PlampyCC</string>
   <key>cell</key><string>PSLinkCell</string>
   <key>label</key><string>PlampyCC</string>
+  <key>icon</key><string>icon.png</string>
   <key>detail</key><string>PlampyCCRootListController</string>
+  <key>isController</key><integer>1</integer>
 </dict>
 </dict></plist>

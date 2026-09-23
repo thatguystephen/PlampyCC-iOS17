@@ -3,9 +3,9 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 source_root = ROOT / "assets"
-layout_root = ROOT / "layout/var/mobile/Library/Application Support/PlampyCC"
+layout_root = ROOT / "layout/Library/Application Support/PlampyCC"
 reference_pattern = re.compile(r'src="([^"]+)"')
-expected_prefix = "/var/jb/var/mobile/Library/Application Support/PlampyCC/"
+expected_prefix = "/var/jb/Library/Application Support/PlampyCC/"
 references = []
 
 for path in sorted(source_root.rglob("*.caml")):

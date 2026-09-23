@@ -61,10 +61,24 @@
 extern "C" void CAMLInvokeOriginalPackage(int seam, __unsafe_unretained id consumer,
                                           __unsafe_unretained id description);
 
+// Package-owned asset roots. The system-wide root is the primary install
+// location (root:wheel); the legacy per-user root remains a bounded migration
+// fallback so user-added theme content keeps working. Each candidate applies
+// the rootless translation macro exactly once — source paths stay logical and
+// never embed an already-translated install prefix.
 static NSString *CAMLThemeRoot(NSString *theme) {
-    // Rooted assets base; final install is <base>/<theme>/Assets per the CAML URL contract.
+    return [ROOT_PATH_NS(@"/Library/Application Support/PlampyCC")
+        stringByAppendingPathComponent:theme];
+}
+
+static NSString *CAMLLegacyThemeRoot(NSString *theme) {
     return [ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC")
         stringByAppendingPathComponent:theme];
+}
+
+// Candidate theme roots in lookup order (exactly one prefix per candidate).
+static NSArray<NSString *> *CAMLThemeRoots(NSString *theme) {
+    return @[ CAMLThemeRoot(theme), CAMLLegacyThemeRoot(theme) ];
 }
 
 // Extract the ORIGINAL stock package name (the private packageURL's .ca stem).
@@ -173,6 +187,35 @@ static void StoreRecoveryState(__unsafe_unretained id consumer,
 
 // ---- construction boundary (called by the non-ARC shim and the reconcile pass) ----
 
+// One rooted candidate: construct the verified replacement description from
+// "<root>/Assets/<mapped bundle>". Every miss fails open to nil so the caller
+// can try the next candidate and finally pass the stock description through.
+static id CAMLConstructReplacement(NSString *root, NSString *name,
+                                   const char *bundleDirectory, Class descriptionClass)
+    __attribute__((ns_returns_retained)) {
+    @try {
+        NSString *assetsPath = [root stringByAppendingPathComponent:@"Assets"];
+        NSBundle *bundle =
+            [NSBundle bundleWithPath:[assetsPath stringByAppendingPathComponent:
+                                                    [NSString stringWithUTF8String:bundleDirectory]]];
+        if (!bundle) return nil;
+        // Verified initializer (ABI map section 2 rows 1-3): the ORIGINAL stock
+        // package name is resolved inside our rooted theme bundle; the incoming
+        // description object is never mutated. Returns +1 here
+        // (ns_returns_retained contract); the non-ARC shim releases it exactly
+        // once after the original invocation.
+        id replacement = [[descriptionClass alloc] initWithPackageName:name inBundle:bundle];
+        if (!replacement) return nil;
+        // Fail open if the private initializer did not resolve a package inside
+        // our bundle (missing resource or unresolved load).
+        id replacementURL = ((id(*)(id, SEL))objc_msgSend)(replacement, @selector(packageURL));
+        if (![replacementURL isKindOfClass:[NSURL class]]) return nil;
+        return replacement;
+    } @catch (...) {
+        return nil;
+    }
+}
+
 extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
                                                __unsafe_unretained id description,
                                                bool sliderSite)
@@ -204,29 +247,24 @@ extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
                                                         PlampyCCThemeType());
         if (!bundleDirectory) return nil;
 
-        NSString *assetsPath =
-            [CAMLThemeRoot(theme) stringByAppendingPathComponent:@"Assets"];
-        NSBundle *bundle =
-            [NSBundle bundleWithPath:[assetsPath stringByAppendingPathComponent:
-                                                    [NSString stringWithUTF8String:bundleDirectory]]];
-        if (!bundle) return nil;
         Class descriptionClass = objc_getClass("CCUICAPackageDescription");
         if (!descriptionClass) return nil;
-        // Verified initializer (ABI map §2 rows 1-3): the ORIGINAL stock package name is
-        // resolved inside our rooted theme bundle; the incoming description object is never
-        // mutated. Returns +1 here (ns_returns_retained contract); the non-ARC shim releases
-        // it exactly once after the original invocation.
-        id replacement = [[descriptionClass alloc] initWithPackageName:name inBundle:bundle];
-        if (!replacement) return nil;
-        // Fail open if the private initializer did not resolve a package inside our bundle.
-        id replacementURL = ((id(*)(id, SEL))objc_msgSend)(replacement, @selector(packageURL));
-        if (![replacementURL isKindOfClass:[NSURL class]]) return nil;
-        // Mark the construction as ours for good: later setter inputs that are
-        // replacements we built are classified OwnedReplacement and can never
-        // be recorded as stock, no matter what happens to the record.
-        objc_setAssociatedObject(replacement, kPackageOwnedKey, @YES,
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        return replacement;
+        for (NSString *root in CAMLThemeRoots(theme)) {
+            // Candidate order: the system-wide root first, then the legacy
+            // per-user root (bounded migration). A candidate whose package URL
+            // does not resolve (missing bundle content or an AMFI/sandbox URL
+            // rejection — not separable from here) is released and the next
+            // candidate is tried; both misses fail open with the same result.
+            id replacement = CAMLConstructReplacement(root, name, bundleDirectory, descriptionClass);
+            if (!replacement) continue;
+            // Mark the construction as ours for good: later setter inputs that are
+            // replacements we built are classified OwnedReplacement and can never
+            // be recorded as stock, no matter what happens to the record.
+            objc_setAssociatedObject(replacement, kPackageOwnedKey, @YES,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            return replacement;
+        }
+        return nil;
     } @catch (...) {
         return nil;
     }

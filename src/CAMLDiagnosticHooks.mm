@@ -1,4 +1,4 @@
-// Replacement IMP shim for the six CAML diagnostic sites.
+// Replacement IMP shim for the seven CAML diagnostic sites.
 //
 // Compiled with ARC disabled (see the Makefile): this file owns the ABI edge —
 // borrowed hook arguments, original-IMP invocation, and exactly-one release of
@@ -32,6 +32,7 @@ IMP gOriginalSliderPackage = NULL;
 IMP gOriginalFactory = NULL;
 IMP gOriginalButtonState = NULL;
 IMP gOriginalSliderState = NULL;
+IMP gOriginalLowPowerDescription = NULL;
 }
 
 extern "C" void ObservePackage(__unsafe_unretained id view, __unsafe_unretained id description, const char *site);
@@ -64,7 +65,7 @@ extern "C" __attribute__((noinline, used)) void CAMLInvokeOriginalPackage(int se
 
 extern "C" __attribute__((noinline, used)) void CAMLButtonPackageHook(__unsafe_unretained id self, SEL cmd,
                                                             __unsafe_unretained id description) {
-    if (CAMLDiagnosticPrimitiveAdmission(false)) ObservePackage(self, description, "button-view");
+    if (CAMLDiagnosticPrimitiveAdmission(false)) ObservePackage(self, description, "button-package");
     __unsafe_unretained id replacement = CAMLCreateReplacementDescription(self, description, false);
     __unsafe_unretained id argument = replacement ? replacement : description;
     if (gOriginalButtonPackage) ((void(*)(__unsafe_unretained id, SEL, __unsafe_unretained id))gOriginalButtonPackage)(self, cmd, argument);
@@ -74,7 +75,7 @@ extern "C" __attribute__((noinline, used)) void CAMLButtonPackageHook(__unsafe_u
 
 extern "C" __attribute__((noinline, used)) void CAMLRoundPackageHook(__unsafe_unretained id self, SEL cmd,
                                                            __unsafe_unretained id description) {
-    if (CAMLDiagnosticPrimitiveAdmission(false)) ObservePackage(self, description, "round-button");
+    if (CAMLDiagnosticPrimitiveAdmission(false)) ObservePackage(self, description, "round-package");
     __unsafe_unretained id replacement = CAMLCreateReplacementDescription(self, description, false);
     __unsafe_unretained id argument = replacement ? replacement : description;
     if (gOriginalRoundPackage) ((void(*)(__unsafe_unretained id, SEL, __unsafe_unretained id))gOriginalRoundPackage)(self, cmd, argument);
@@ -84,7 +85,7 @@ extern "C" __attribute__((noinline, used)) void CAMLRoundPackageHook(__unsafe_un
 
 extern "C" __attribute__((noinline, used)) void CAMLSliderPackageHook(__unsafe_unretained id self, SEL cmd,
                                                             __unsafe_unretained id description) {
-    if (CAMLDiagnosticPrimitiveAdmission(false)) ObservePackage(self, description, "slider-view");
+    if (CAMLDiagnosticPrimitiveAdmission(false)) ObservePackage(self, description, "slider-package");
     __unsafe_unretained id replacement = CAMLCreateReplacementDescription(self, description, true);
     __unsafe_unretained id argument = replacement ? replacement : description;
     if (gOriginalSliderPackage) ((void(*)(__unsafe_unretained id, SEL, __unsafe_unretained id))gOriginalSliderPackage)(self, cmd, argument);
@@ -101,12 +102,24 @@ extern "C" __attribute__((noinline, used)) id CAMLFactoryHook(__unsafe_unretaine
 
 extern "C" __attribute__((noinline, used)) void CAMLButtonStateHook(__unsafe_unretained id self, SEL cmd,
                                                           __unsafe_unretained id state) {
-    if (CAMLDiagnosticPrimitiveAdmission(false)) ObserveState(self, state, "glyph-state");
+    if (CAMLDiagnosticPrimitiveAdmission(false)) ObserveState(self, state, "button-state");
     if (gOriginalButtonState) ((void(*)(__unsafe_unretained id, SEL, __unsafe_unretained id))gOriginalButtonState)(self, cmd, state);
 }
 
 extern "C" __attribute__((noinline, used)) void CAMLSliderStateHook(__unsafe_unretained id self, SEL cmd,
                                                           __unsafe_unretained id state) {
-    if (CAMLDiagnosticPrimitiveAdmission(false)) ObserveState(self, state, "glyph-state");
+    if (CAMLDiagnosticPrimitiveAdmission(false)) ObserveState(self, state, "slider-state");
     if (gOriginalSliderState) ((void(*)(__unsafe_unretained id, SEL, __unsafe_unretained id))gOriginalSliderState)(self, cmd, state);
+}
+
+// Observer-only Low Power seam. The exact stock getter result is returned
+// unchanged; no replacement construction, setter call, or recovery state runs.
+extern "C" __attribute__((noinline, used)) id CAMLLowPowerDescriptionHook(__unsafe_unretained id self,
+                                                                          SEL cmd) {
+    bool shouldObserve = CAMLDiagnosticPrimitiveAdmission(false);
+    __unsafe_unretained id description = gOriginalLowPowerDescription
+        ? ((id(*)(__unsafe_unretained id, SEL))gOriginalLowPowerDescription)(self, cmd)
+        : nil;
+    if (shouldObserve) ObservePackage(self, description, "controller");
+    return description;
 }

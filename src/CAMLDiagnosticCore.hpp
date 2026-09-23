@@ -120,7 +120,9 @@ private:
 class RingPolicy {
 public:
     static constexpr size_t kCapacity = 512;
-    static constexpr size_t kSerializedEventCapacity = 256;
+    // 512 fixed-size records remain bounded (< 192 KiB total) while the v2
+    // schema carries the additional route evidence without truncating fields.
+    static constexpr size_t kSerializedEventCapacity = 384;
     static constexpr uint64_t kSessionCap = 2000;
 
     bool Admit(uint64_t accepted) const { return accepted < kSessionCap; }
@@ -226,6 +228,79 @@ inline RuntimeInstallDecision DecideRuntimeInstall(const RuntimeInstallMetadata 
     if (!metadata.hookSucceeded) return RuntimeInstallDecision::HookFailed;
     if (!metadata.originalAvailable) return RuntimeInstallDecision::OriginalUnavailable;
     return RuntimeInstallDecision::Installed;
+}
+
+// ---- admission policy (the compile-time constant supersedes cfprefsd) ----
+// The recorder can only ever record in a build that defined
+// PLAMPYCC_DIAGNOSTIC_BUILD: without that compile-time constant no runtime
+// preference, key, or reset can enable recording (a release binary can never
+// record), and with it no cfprefsd read failure, preference reset, or missing
+// diagnostic key can stop recording. The kDiagnosticEnabled preference is
+// superseded and no longer gates anything; the preference only picks the
+// verbosity level, and the verbose flag is only consulted for the verbose-only
+// paths. The session latch (loggingDisabled) keeps the existing fail-closed
+// behavior: once any invariant below fails, this process stops recording for
+// good. Re-entrancy (inObserver) completes the admission; the observer is
+// per-thread, matching the single-threaded delivery sites.
+struct AdmissionInput {
+    bool inObserver;       // re-entrancy
+    bool loggingDisabled;  // session latch
+    bool compileEnabled;   // PLAMPYCC_DIAGNOSTIC_BUILD constant
+    bool verbose;          // preference-selected level (cfprefsd-independent)
+    bool verboseOnly;      // this site is verbose-only
+};
+
+inline bool AdmitObserverBody(const AdmissionInput &input) {
+    return input.compileEnabled && !input.loggingDisabled && !input.inObserver &&
+           (!input.verboseOnly || input.verbose);
+}
+
+// ---- verified package-URL form policy (source/proposed forms) ----
+// SourceURLForm: the getter-side shape of the observed package URL (the side
+// AMFI/sandbox filtering actually takes). Column values: "file", "non-file",
+// "none". An in-bundle failure and an AMFI/sandbox URL rejection are NOT
+// separable from the read side and therefore report the same source form.
+inline const char *SourceURLForm(bool respondsToGetter, bool hasURL, bool isFileURL) {
+    if (!respondsToGetter || !hasURL) return "none";
+    return isFileURL ? "file" : "non-file";
+}
+
+// ProposedURLForm: how a replacement would be proposed to the verified setter
+// (a resolved URL as an /-prefixed path string), or "none" when no proposal
+// exists. Both an in-bundle failure and an AMFI/sandbox URL rejection are
+// "file-string" proposals that simply did not resolve on the read side — the
+// same result string on purpose (the failure reason is not recoverable).
+inline const char *ProposedURLForm(bool hasURL) {
+    return hasURL ? "file-string" : "none";
+}
+
+// ---- construction-path / load-outcome policy ----
+// The construction path classifies how each CAML package would be routed and
+// therefore which package bundle a replacement would be created from (the
+// BundleDirectoryForPackage site: setter vs slider mapping). State, factory,
+// and controller paths never construct.
+inline const char *ConstructionPathForSite(const char *site) {
+    if (!site) return "unknown";
+    if (strcmp(site, "slider-package") == 0) return "slider";
+    if (strcmp(site, "button-package") == 0 || strcmp(site, "round-package") == 0) return "setter";
+    if (strcmp(site, "button-state") == 0 || strcmp(site, "slider-state") == 0) return "state";
+    if (strcmp(site, "factory") == 0) return "factory";
+    if (strcmp(site, "controller") == 0) return "controller";
+    return "unknown";
+}
+
+inline bool IsLoadClassificationPath(const char *constructionPath) {
+    return constructionPath &&
+           (strcmp(constructionPath, "setter") == 0 || strcmp(constructionPath, "slider") == 0);
+}
+
+// LoadOutcomeForEvidence: the load/rejection outcome column ("loaded",
+// "rejected", "none" outside load classification). A source form that did not
+// resolve is a rejection — including AMFI/sandbox URL rejection, which reports
+// the same result string as any other non-resolution.
+inline const char *LoadOutcomeForEvidence(bool classifiedLoadSite, bool resolvedSourceForm) {
+    if (!classifiedLoadSite) return "none";
+    return resolvedSourceForm ? "loaded" : "rejected";
 }
 
 } // namespace caml_diag

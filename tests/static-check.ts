@@ -38,7 +38,7 @@ const core = await read("src/CAMLReplacementCore.hpp");
 assert(makefile.includes("ARCHS = arm64 arm64e") && makefile.includes("THEOS_PACKAGE_SCHEME = rootless"), "rootless Make contract missing");
 assert(prefsMakefile.includes("PlampyCC_INSTALL_PATH = /Library/PreferenceBundles"), "preference install path is not logical");
 assert(!makefile.includes("layout/var/jb") && !prefsMakefile.includes("/var/jb"), "logical layout contains a second rootless prefix");
-assert(source.includes("#import <rootless.h>") && source.includes("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")"), "rootless runtime path contract missing");
+assert(source.includes("#import <rootless.h>") && source.includes("ROOT_PATH_NS(@\"/Library/Application Support/PlampyCC\")") && source.includes("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")"), "primary/fallback rootless runtime path contract missing");
 assert(workflow.includes("THEOS_COMMIT: 5280bd038207e14f8bd76f5417aa2fe641c03228"), "workflow does not pin the reviewed Theos revision");
 assert(workflow.includes("runs-on: macos-15") && !workflow.includes("macos-14"), "workflow is not pinned to the Apple Silicon macos-15 runner");
 assert(workflow.includes("DEVELOPER_DIR: /Applications/Xcode_16.4.app"), "workflow does not pin the documented Xcode 16.4 path");
@@ -57,6 +57,8 @@ assert(workflow.includes("strip -x \"$source_binary\"") && workflow.includes("dp
 assert(workflow.includes("SHA256SUMS") && workflow.includes("tests/caml-diagnostic-artifact.py dist"), "workflow does not emit and verify artifact checksums");
 assert(workflow.includes("TARGET_CODESIGN = ldid") && workflow.includes("TARGET_CODESIGN_FLAGS ?= -S"), "workflow does not verify the pinned Theos signing step");
 assert(workflow.includes("ldid -S \"$staged_file\"") && workflow.includes("tests/signature-contract.py --package"), "final packaged Mach-Os are not re-signed and signature-verified after stripping");
+assert(workflow.includes("sudo chown -R 0:0") && workflow.includes("chmod 0755") && workflow.includes("chmod 0644"), "final package root:wheel ownership and safe-mode normalization are missing");
+assert(workflow.includes("DIAGNOSTIC=1"), "temporary collector workflow does not request the diagnostic build mode");
 assert(workflow.indexOf("strip -x \"$source_binary\"") < workflow.indexOf("ldid -S \"$staged_file\"") && workflow.indexOf("ldid -S \"$staged_file\"") < workflow.indexOf("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\""), "post-strip re-sign does not precede repacking");
 assert(workflow.includes("cmp \"$packaged_file\" \"$RUNNER_TEMP/plampycc-package$relative\""), "packaged bytes are not proven unchanged since signing");
 assert(provenance.includes("ldid -S"), "provenance does not record the pinned signing step");
@@ -67,7 +69,7 @@ for (const path of [
   "layout/Library/PreferenceLoader/Preferences/PlampyCC.plist",
 ]) assert(await exists(path), `missing logical staged registration ${path}`);
 assert(!(await exists("layout/var/jb")), "staged layout still has a rootless prefix directory");
-for (const theme of ["Plampy", "Pulsar"]) assert(await exists(`layout/var/mobile/Library/Application Support/PlampyCC/${theme}/wallpaper.jpeg`), `missing staged ${theme} wallpaper`);
+for (const theme of ["Plampy", "Pulsar"]) assert(await exists(`layout/Library/Application Support/PlampyCC/${theme}/wallpaper.jpeg`), `missing staged ${theme} wallpaper`);
 
 const mapping: Record<string, string> = {
   "com.apple.camera": "Camera",
@@ -88,14 +90,16 @@ const expectedOutcomes = {
   Magnifier: { Plampy: "stock", Pulsar: "stock" },
 };
 async function iconOutcome(theme: string, icon: string): Promise<string> {
-  if (await Bun.file(`${root}/layout/var/mobile/Library/Application Support/PlampyCC/${theme}/Icon/${icon}.png`).exists()) return "theme";
-  if (theme === "Pulsar" && await Bun.file(`${root}/layout/var/mobile/Library/Application Support/PlampyCC/Plampy/Icon/${icon}.png`).exists()) return "plampy-fallback";
+  if (await Bun.file(`${root}/layout/Library/Application Support/PlampyCC/${theme}/Icon/${icon}.png`).exists()) return "theme";
+  if (theme === "Pulsar" && await Bun.file(`${root}/layout/Library/Application Support/PlampyCC/Plampy/Icon/${icon}.png`).exists()) return "plampy-fallback";
   return "stock";
 }
 for (const icon of Object.values(mapping)) for (const theme of ["Plampy", "Pulsar"]) assert(await iconOutcome(theme, icon) === expectedOutcomes[icon][theme], `unexpected ${theme} outcome for ${icon}`);
 
 assert(source.includes("static void ReconcileGlyphView") && source.includes("for (id view in gGlyphViews)"), "live glyph reconciliation is not tracked on preference reload");
 assert(source.includes("plampy.glyphOverride") && source.includes("state[@\"identifier\"]") && source.includes("state[@\"original\"]"), "glyph ownership state is not identity-aware");
+assert(source.includes("CCUIFlashlightModuleViewController") && source.includes("plampy.flashlightGlyphs") && source.includes("FlashlightOff") && source.includes("FlashlightOn"), "Flashlight selected/unselected static glyph ownership is missing");
+assert(source.includes("ReleaseFlashlightGlyphs") && source.includes("@selector(setSelectedGlyphImage:)"), "Flashlight stock glyph restoration seam is missing");
 assert(!source.includes("plampy.originalGlyph") && !source.includes("OBJC_ASSOCIATION_ASSIGN"), "glyph/wallpaper state uses stale non-owned association semantics");
 assert(source.includes("if (!current) {\n        ReleaseGlyphOverride(view);"), "missing replacement does not release an owned glyph safely");
 assert(source.includes("[blur removeFromSuperview]") && source.includes("objc_setAssociatedObject(self, \"plampy.blur\", nil"), "wallpaper teardown does not release blur state");
@@ -111,7 +115,7 @@ assert(!sites.includes('"CCUIContinuousSliderView"'), "slider site must move to 
 // Functional animated CAML: verified construct-and-pass route, fail-open.
 assert(replacement.includes("ns_returns_retained") && replacement.includes("CAMLCreateReplacementDescription"), "construct-and-pass factory boundary missing");
 assert(replacement.includes("initWithPackageName:name inBundle:bundle") && replacement.includes("CAMLThemeRoot("), "verified initializer route missing");
-assert(replacement.includes("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")"), "replacement theme root is not the rooted logical root");
+assert(replacement.includes("ROOT_PATH_NS(@\"/Library/Application Support/PlampyCC\")") && replacement.includes("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")"), "replacement theme roots do not use the primary rooted path with bounded legacy fallback");
 assert(replacement.includes("@catch (...)") && replacement.includes("return replacement;"), "replacement factory lacks guarded +1 handoff");
 for (const fn of ["CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook"]) assert(hooks.includes(fn), `package hook missing ${fn}`);
 assert(hooks.includes("CAMLCreateReplacementDescription(self, description, false)") && hooks.includes("CAMLCreateReplacementDescription(self, description, true)"), "construct-and-pass factory calls missing");
@@ -142,12 +146,12 @@ assert(tableEntries.length >= 20, "replacement mapping table is missing entries"
 for (const theme of ["Plampy", "Pulsar"]) {
   for (const entry of tableEntries) {
     if (theme === "Plampy" && entry.name === "HAE_1_x_1") continue; // Pulsar-only package, fails open under Plampy
-    assert(await exists(`layout/var/mobile/Library/Application Support/PlampyCC/${theme}/Assets/${entry.bundle}/${entry.name}.ca/main.caml`),
+    assert(await exists(`layout/Library/Application Support/PlampyCC/${theme}/Assets/${entry.bundle}/${entry.name}.ca/main.caml`),
       `mapping target absent from staged payload: ${theme} ${entry.name} -> ${entry.bundle}`);
   }
 }
 const mappedNames = new Set(tableEntries.map((entry) => entry.name));
-for (const file of new Bun.Glob("layout/var/mobile/Library/Application Support/PlampyCC/*/Assets/*/*.ca/main.caml").scanSync({ cwd: root, onlyFiles: true })) {
+for (const file of new Bun.Glob("layout/Library/Application Support/PlampyCC/*/Assets/*/*.ca/main.caml").scanSync({ cwd: root, onlyFiles: true })) {
   const parts = file.split("/");
   const name = parts[parts.length - 2].replace(/\.ca$/, "");
   assert(mappedNames.has(name), `staged animated package has no mapping entry: ${file}`);
@@ -158,7 +162,7 @@ for (const field of ["Package: xyz.cypwn.plampycc", "Architecture: iphoneos-arm6
 async function validateCamlReferences(caml: string, file: string): Promise<string[]> {
   const references = [...caml.matchAll(/src="([^"]+)"/g)].map((match) => match[1]);
   for (const reference of references) {
-    if (!reference.startsWith("/var/jb/var/mobile/Library/Application Support/PlampyCC/")) fail(`invalid CAML prefix in ${file}: ${reference}`);
+    if (!reference.startsWith("/var/jb/Library/Application Support/PlampyCC/")) fail(`invalid CAML prefix in ${file}: ${reference}`);
     if (reference.includes("/var/jb/var/jb/") || reference.includes("/var/jb/var/mobile/var/mobile/")) fail(`repeated CAML prefix in ${file}: ${reference}`);
     const staged = `layout${reference.slice("/var/jb".length)}`;
     if (!await Bun.file(`${root}/${staged}`).exists()) fail(`CAML dependency is absent from logical layout: ${file} -> ${reference}`);
@@ -171,7 +175,7 @@ for (const file of camlFiles) {
   const caml = await read(file);
   camlReferenceCount += (await validateCamlReferences(caml, file)).length;
   const [, theme, ...assetParts] = file.split("/");
-  const mirror = `layout/var/mobile/Library/Application Support/PlampyCC/${theme}/${assetParts.join("/")}`;
+  const mirror = `layout/Library/Application Support/PlampyCC/${theme}/${assetParts.join("/")}`;
   assert(await exists(mirror), `missing staged CAML mirror ${mirror}`);
   assert(await read(mirror) === caml, `source/staged CAML bytes diverge: ${file}`);
 }
