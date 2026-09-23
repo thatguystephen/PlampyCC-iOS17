@@ -19,6 +19,47 @@ function reconcileGlyph(state: any): any {
   return { ...state, currentImage: state.replacementImage, originalImage: original, appliedImage: state.replacementImage };
 }
 const disableGlyph = (state: any) => reconcileGlyph({ ...state, enabled: false });
+// Live CAML package reconciliation model (SP1): mirrors the production
+// transition in src/CAMLReplacement.xm — read-back classification, newer-stock
+// adoption, and the caml_replacement::DecideReconcile decision table.
+function classifyPackageInstall(state: any): string {
+  if (!state.installed) return "none";
+  if (state.applied && state.installed === state.applied) return "owned";
+  if (state.installed === state.original) return "stock";
+  return "changed";
+}
+function decidePackageReconcile(facts: any): string {
+  if (facts.observation === "none") return "keep";
+  const owned = facts.observation === "owned";
+  if (facts.enabled && facts.replacementAvailable) return owned && facts.themeSatisfies ? "keep" : "apply";
+  return owned ? "restore" : "keep";
+}
+function recordPackageInstall(seam: string, stock: string, installed: any, owned: boolean, theme: string): any {
+  return { seam, identifier: stock, original: stock, applied: owned ? installed : null, appliedTheme: owned ? theme : null };
+}
+function reconcilePackage(state: any, installed: any, prefs: any): any {
+  const seam = state.seam;
+  if (!installed) return { seam, identifier: null, original: null, applied: null, appliedTheme: null, installed };
+  const observation = classifyPackageInstall({ ...state, installed });
+  let original = state.original ?? installed;
+  let applied = state.applied;
+  let appliedTheme = state.appliedTheme;
+  if (observation === "changed") { original = installed; applied = null; appliedTheme = null; }
+  const identifier = original;
+  const installedIsApplied = !!applied && installed === applied;
+  const action = decidePackageReconcile({
+    enabled: prefs.enabled,
+    replacementAvailable: !!prefs.replacement,
+    observation,
+    themeSatisfies: installedIsApplied && appliedTheme === prefs.theme,
+  });
+  if (action === "apply") return { seam, identifier, original, applied: prefs.replacement, appliedTheme: prefs.theme, installed: prefs.replacement };
+  if (action === "restore") return { seam, identifier: null, original: null, applied: null, appliedTheme: null, installed: original };
+  return { seam, identifier, original, applied: installedIsApplied ? applied : null, appliedTheme: installedIsApplied ? appliedTheme : null, installed };
+}
+// Weak consumer registry model: destroyed consumers drop out of the pass.
+const packageRegistry = new Set<string>();
+const destroyPackageConsumer = (consumer: string) => packageRegistry.delete(consumer);
 const source = await read("src/Tweak.xm");
 const makefile = await read("Makefile");
 const prefsMakefile = await read("prefs/Makefile");
@@ -105,14 +146,29 @@ assert(!sites.includes('"CCUIContinuousSliderView"'), "slider site must move to 
 
 // Functional animated CAML: verified construct-and-pass route, fail-open.
 assert(replacement.includes("ns_returns_retained") && replacement.includes("CAMLCreateReplacementDescription"), "construct-and-pass factory boundary missing");
-assert(replacement.includes("initWithPackageName:name inBundle:bundle") && replacement.includes("CAMLThemeRoot()"), "verified initializer route missing");
+assert(replacement.includes("initWithPackageName:name inBundle:bundle") && replacement.includes("CAMLThemeRoot("), "verified initializer route missing");
 assert(replacement.includes("ROOT_PATH_NS(@\"/var/mobile/Library/Application Support/PlampyCC\")"), "replacement theme root is not the rooted logical root");
-assert(replacement.includes("@catch (...)") && replacement.includes("return replacement; // +1"), "replacement factory lacks guarded +1 handoff");
+assert(replacement.includes("@catch (...)") && replacement.includes("return replacement;"), "replacement factory lacks guarded +1 handoff");
 for (const fn of ["CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook"]) assert(hooks.includes(fn), `package hook missing ${fn}`);
-assert(hooks.includes("CAMLCreateReplacementDescription(description, false)") && hooks.includes("CAMLCreateReplacementDescription(description, true)"), "construct-and-pass factory calls missing");
+assert(hooks.includes("CAMLCreateReplacementDescription(self, description, false)") && hooks.includes("CAMLCreateReplacementDescription(self, description, true)"), "construct-and-pass factory calls missing");
 assert(hooks.includes("argument = replacement ? replacement : description"), "fail-open original-description fallback missing");
-assert(hooks.split("objc_release(replacement)").length - 1 === 3, "each package hook must own exactly one post-original release");
-assert(!hooks.includes("objc_release(description)"), "the borrowed incoming description must not be released");
+assert(hooks.split("CAMLReleaseReplacement(replacement)").length - 1 === 3, "each package hook must own exactly one post-original release");
+assert(!hooks.includes("CAMLReleaseReplacement(description)"), "the borrowed incoming description must not be released");
+assert(!hooks.includes("objc_release") && hooks.split("[replacement release]").length - 1 === 1, "the pinned-SDK release form is not the exactly-once MRR message release");
+
+// Live CAML preference reconciliation (SP1): owned/applied recovery state,
+// weak consumer lifetimes, main-thread reconcile from the preference reload seam.
+assert(replacement.includes("weakObjectsHashTable") && replacement.includes("allObjects"), "package consumers are not tracked weakly for their lifetimes");
+for (const key of ['@"identifier"', '@"original"', '@"applied"', '@"appliedTheme"']) assert(replacement.includes(key), `package recovery state is not identity-aware: ${key}`);
+assert(replacement.includes("plampy.packageOverride") && replacement.includes("plampy.packageSeam"), "package recovery state is not association-scoped to the consumer");
+assert(replacement.includes("ClassifyInstall") && replacement.includes("DecideReconcile") && core.includes("DecideReconcile"), "package reconcile does not run the production decision policy");
+assert(replacement.includes("ReadInstalledDescription(consumer, &probe)") && replacement.includes("glyphPackageDescription"), "factory does not require a verified recovery read-back before taking ownership");
+assert(replacement.includes("CAMLInvokeOriginalPackage(seam, consumer"), "reconcile does not apply/restore through the original-IMP slots");
+assert(replacement.includes("if (![NSThread isMainThread])"), "package state updates are not main-thread confined");
+assert(source.includes("ReconcileWallpaper(overlay);\n        CAMLReconcilePackageConsumers();"), "preference reloads do not reconcile package consumers");
+assert(hooks.includes("CAMLRecordPackageInstall(self, description, argument, replacement != NULL, 0)") && hooks.includes("CAMLRecordPackageInstall(self, description, argument, replacement != NULL, 2)"), "package hooks do not record owned/applied recovery state");
+assert(!replacement.includes("CAML-REPLACEMENT-IMPLEMENTATION.md") && replacement.includes("CAML-ROUTING-BLOCKER.md"), "replacement module points at stale documentation");
+assert(!replacement.includes("valueForKey") && !replacement.includes("setValue"), "the replacement route mutates private description state");
 assert(core.includes("BundleDirectoryForPackage") && core.includes("\"timer\", \"TimerModule.bundle\"") && core.includes("themeType == 1"), "routing core missing verified timer/Pulsar skip");
 assert(core.includes("\"DisplayModule.bundle\"") && core.includes("\"MediaControls.framework\""), "routing core missing verified slider routes");
 
@@ -189,6 +245,43 @@ glyph = reconcileGlyph({ enabled: true, identifier: "com.apple.camera", mappedIc
 glyph = disableGlyph(glyph);
 assert(glyph.currentImage === "changed-stock", "changed stock image was overwritten during restore");
 
+// Live CAML package reconciliation transitions across the three verified
+// setter seams (source-verification step 2, acceptance criteria SP1). Model and
+// production share the classification and decision policies exercised natively.
+for (const seam of ["button", "round", "slider"]) {
+  packageRegistry.add(`consumer-${seam}`);
+  // 1. Disabled startup installs untouched stock; enabling themes it.
+  let pkg = { ...recordPackageInstall(seam, "stock-wifi", "stock-wifi", false, "Plampy"), installed: "stock-wifi" };
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: false, theme: "Plampy", replacement: null });
+  assert(pkg.installed === "stock-wifi" && pkg.applied === null, `${seam}: disabled startup must preserve untouched stock`);
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Plampy", replacement: "T-Plampy" });
+  assert(pkg.installed === "T-Plampy" && pkg.applied === "T-Plampy" && pkg.original === "stock-wifi", `${seam}: enable does not theme preserved stock`);
+  // 2. Plampy→Pulsar theme change swaps the owned replacement idempotently.
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: "T-Pulsar" });
+  assert(pkg.installed === "T-Pulsar" && pkg.applied === "T-Pulsar" && pkg.original === "stock-wifi", `${seam}: theme change does not swap the owned replacement`);
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: "T-Pulsar" });
+  assert(pkg.installed === "T-Pulsar" && pkg.applied === "T-Pulsar", `${seam}: theme change swap is not idempotent`);
+  // 3. Disable restores captured stock; re-enable themes again.
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: false, theme: "Pulsar", replacement: null });
+  assert(pkg.installed === "stock-wifi" && pkg.applied === null, `${seam}: disable does not restore owned state`);
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: "T-Pulsar" });
+  assert(pkg.installed === "T-Pulsar", `${seam}: re-enable does not theme stock again`);
+  // 4. Missing or unsupported resources restore stock when owned.
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Pulsar", replacement: null });
+  assert(pkg.installed === "stock-wifi" && pkg.applied === null, `${seam}: missing resource does not restore stock`);
+  // 5. Newer stock assignments (including identity changes) are adopted and never overwritten.
+  pkg = reconcilePackage({ ...pkg, identifier: "old-stem", original: "old-stock", applied: "T-old", appliedTheme: "Plampy" }, "new-stock", { enabled: false, theme: "Plampy", replacement: null });
+  assert(pkg.installed === "new-stock" && pkg.original === "new-stock" && pkg.applied === null, `${seam}: changed stock was overwritten or kept ownership`);
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Plampy", replacement: "T-Plampy" });
+  assert(pkg.installed === "T-Plampy" && pkg.original === "new-stock", `${seam}: changed stock is not themed under its own identity`);
+  // 6. Unsupported theme after ownership: restore preserves the original.
+  pkg = reconcilePackage(pkg, pkg.installed, { enabled: true, theme: "Plampy", replacement: null });
+  assert(pkg.installed === "new-stock" && pkg.applied === null, `${seam}: unsupported resources keep an owned override installed`);
+  // 7. Consumer destruction: the weak registry drops destroyed consumers before the pass.
+  assert(destroyPackageConsumer(`consumer-${seam}`), `${seam}: weak registry does not drop destroyed consumers`);
+  assert(!packageRegistry.has(`consumer-${seam}`), `${seam}: destroyed consumer survives the weak registry`);
+}
+
 for (const field of ["target_names", "exactly one package is required", "symbols must contain tweak and preferences targets", "unstrippedBinaries", "sha256"]) assert(emitter.includes(field), `manifest producer contract missing ${field}`);
 
-console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, rootless staging/strip contract, and producer/consumer manifest coverage");
+console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, live package preference reconciliation transitions across all three setter seams, rootless staging/strip contract, and producer/consumer manifest coverage");

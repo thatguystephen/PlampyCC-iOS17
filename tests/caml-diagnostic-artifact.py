@@ -102,7 +102,12 @@ ORIGINAL_SLOT_NAMES = (
     "gOriginalFactory", "gOriginalButtonState", "gOriginalSliderState",
 )
 DESCRIPTOR_NAMES = ("BuildCAMLDiagnosticSites", "InstallCAMLDiagnosticSites")
-REPLACEMENT_BOUNDARY_NAMES = ("CAMLDiagnosticPrimitiveAdmission", "CAMLCreateReplacementDescription")
+REPLACEMENT_BOUNDARY_NAMES = (
+    "CAMLDiagnosticPrimitiveAdmission", "CAMLCreateReplacementDescription",
+    "CAMLRecordPackageInstall", "CAMLReconcilePackageConsumers",
+    "CAMLInvokeOriginalPackage", "CAMLReleaseReplacement",
+)
+PACKAGE_HOOK_NAMES = ("CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook")
 
 
 def sha256(path: Path) -> str:
@@ -154,6 +159,13 @@ def all_symbol_addresses(symbols: str) -> dict[str, int]:
         if match is not None:
             found[match.group(2).lstrip("_")] = int(match.group(1), 16)
     return found
+
+
+def branch_to(line: str, address: int, name: str | None = None) -> bool:
+    opcode_ok = re.match(r"^\s*[0-9a-fA-F]{8,}\s+b", line) is not None
+    target_ok = re.search(rf"(?:0x)?0*{address:x}(?:\b|\s|$)", line) is not None
+    named_ok = name is not None and name in line
+    return opcode_ok and (target_ok or named_ok)
 
 
 def disassembly_ranges(disassembly: str, addresses: dict[str, int], boundaries: dict[str, int] | None = None) -> dict[str, str]:
@@ -225,6 +237,22 @@ def verify_stripped_slice(binary: Path, companion: Path, architecture: str) -> N
             raise SystemExit(f"{binary}: {name} has ownership/message work before admission")
         if not any("blr" in line for line in lines[admission_index + 1:]):
             raise SystemExit(f"{binary}: {name} has no original-IMP indirect call after admission")
+    # Ownership bookkeeping for the three package hooks: exactly one recovery-state
+    # record and exactly one release, both after the original invocation, with the
+    # release after the record (the reviewed exactly-once post-original order).
+    record_target = addresses["CAMLRecordPackageInstall"]
+    release_target = addresses["CAMLReleaseReplacement"]
+    for name in PACKAGE_HOOK_NAMES:
+        lines = ranges[name].splitlines()
+        record_calls = [index for index, line in enumerate(lines) if branch_to(line, record_target, "CAMLRecordPackageInstall")]
+        release_calls = [index for index, line in enumerate(lines) if branch_to(line, release_target, "CAMLReleaseReplacement")]
+        indirect = [index for index, line in enumerate(lines) if "blr" in line]
+        if len(record_calls) != 1:
+            raise SystemExit(f"{binary}: {name} does not record recovery state exactly once")
+        if len(release_calls) != 1:
+            raise SystemExit(f"{binary}: {name} does not release the replacement exactly once")
+        if not indirect or record_calls[0] < indirect[-1] or release_calls[0] < record_calls[0]:
+            raise SystemExit(f"{binary}: {name} ownership bookkeeping is not exactly once after the original invocation")
 
 
 def verify_slice(binary: Path, require_symbols: bool) -> None:

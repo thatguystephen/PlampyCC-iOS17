@@ -8,7 +8,7 @@ The tweak, filter, PreferenceLoader registration and preference bundle all use l
 
 The original `selectImage` preference action remains pending a Steph product decision: this reconstruction preserves the stock wallpaper source when the feature is unavailable, and makes no parity claim. Enabling it requires separate approval and an identified original contract.
 
-Animated CAML routing now implements only the verified 21D50 construct-and-pass route: the three setter hooks, rooted theme bundle construction, exact ownership/release behavior, the verified slider superclass move, and fail-open original-description fallback. It is not runtime-verified and does not claim CAML success, animation parity, or device stability. Five runtime observations remain explicitly deferred in `CAML-ROUTING-BLOCKER.md`.
+Animated CAML routing now implements only the verified 21D50 construct-and-pass route: the three setter hooks, rooted theme bundle construction, exact ownership/release behavior, the verified slider superclass move, and fail-open original-description fallback, plus live preference reconciliation of tracked consumers through the same verified route. It is not runtime-verified and does not claim CAML success, animation parity, or device stability. Five runtime observations remain explicitly deferred in `CAML-ROUTING-BLOCKER.md`.
 
 The staged macOS workflow pins Theos, SDK, checkout, Bun, and artifact-upload revisions. It is not dispatched by this task. A production arm64e package remains unbuilt on this Linux host because the modern arm64e ABI requires the pinned macOS build boundary.
 

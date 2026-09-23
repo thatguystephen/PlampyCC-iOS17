@@ -9,6 +9,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <rootless.h>
 #import "CAMLDiagnostic.h"
+#import "CAMLReplacement.h"
 #import "PlampyCCState.h"
 
 static NSString * const kPrefsDomain = @"com.misakaproject.plampyCC";
@@ -169,6 +170,7 @@ static void ReloadPrefs(CFNotificationCenterRef center, void *observer, CFString
     dispatch_async(dispatch_get_main_queue(), ^{
         for (id view in gGlyphViews) ReconcileGlyphView(view);
         for (id overlay in gOverlays) ReconcileWallpaper(overlay);
+        CAMLReconcilePackageConsumers();
     });
 }
 static void Install(Class cls, SEL sel, IMP imp, IMP *orig) { if (HasMethod(cls, sel)) MSHookMessageEx(cls, sel, imp, orig); }

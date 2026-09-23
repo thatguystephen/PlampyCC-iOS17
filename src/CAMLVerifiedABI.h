@@ -20,6 +20,13 @@
 @interface NSObject (CAMLVerifiedPackageDescription)
 - (id)initWithPackageName:(NSString *)packageName inBundle:(NSBundle *)bundle;
 - (NSURL *)packageURL;
+// Recovery read-back only: used to compare the currently installed description
+// against the recorded original/applied pair before installing or restoring
+// anything (never mutated). Selector existence machine-verified in the 21D50
+// selector table (evidence/CAML-ABI-MAP-21D50.md §7.1); storage verified as the
+// _glyphPackageDescription ivar the setters write (§2). Called only behind a
+// respondsToSelector check so a miss fails open.
+- (id)glyphPackageDescription;
 @end
 
 #endif

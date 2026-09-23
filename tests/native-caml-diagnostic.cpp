@@ -163,6 +163,75 @@ static void TestAtomicFaultBoundary() {
     assert(!ParsePathComponents("////", &path));
 }
 
+// SP1: live preference reconciliation across the three verified setter seams.
+// Production-coupled: drives the same decision helpers the ARC reconcile pass
+// runs (ClassifyInstall/DecideReconcile) and the same routing map the factory
+// attempts (BundleDirectoryForPackage through RoutingSiteFor).
+//
+// Consumer destruction is a registry-lifetime property rather than a decision:
+// the weak NSHashTable drops destroyed consumers before the pass ever gathers
+// facts, so destruction yields "no facts, no action" (asserted at model level
+// in tests/static-check.ts together with the weak-registry source contract).
+static void TestPackageReconcileTransitions() {
+    using namespace caml_replacement;
+    // Read-back classification distinguishes owned/applied replacements from
+    // untouched and newer stock descriptions.
+    assert(ClassifyInstall(true, true, false) == InstallObservation::OwnedReplacement);
+    assert(ClassifyInstall(true, true, true) == InstallObservation::OwnedReplacement);
+    assert(ClassifyInstall(true, false, true) == InstallObservation::StockUnchanged);
+    assert(ClassifyInstall(true, false, false) == InstallObservation::StockChanged);
+    assert(ClassifyInstall(false, false, false) == InstallObservation::NoDescription);
+
+    struct SeamCase { Seam seam; const char *stem; };
+    const SeamCase seams[] = {
+        {Seam::ButtonPackage, "WiFi"},
+        {Seam::RoundPackage, "Bluetooth"},
+        {Seam::SliderPackage, "BrightnessControl"},
+    };
+    for (const SeamCase &seamCase : seams) {
+        Site site = RoutingSiteFor(seamCase.seam);
+        // The factory attempt is the resource-availability probe: routing hit
+        // plus a present theme resource.
+        auto available = [&](int theme, bool resourcePresent) {
+            return resourcePresent && BundleDirectoryForPackage(seamCase.stem, site, theme) != nullptr;
+        };
+        // Disabled startup leaves stock untouched; enabling reconciles it.
+        assert(DecideReconcile({false, available(0, true), InstallObservation::StockUnchanged, false}) == ReconcileAction::KeepInstalled);
+        assert(DecideReconcile({true, available(0, true), InstallObservation::StockUnchanged, false}) == ReconcileAction::ApplyReplacement);
+        // Plampy<->Pulsar theme change while owned: swap, then idempotent.
+        assert(DecideReconcile({true, available(1, true), InstallObservation::OwnedReplacement, false}) == ReconcileAction::ApplyReplacement);
+        assert(DecideReconcile({true, available(1, true), InstallObservation::OwnedReplacement, true}) == ReconcileAction::KeepInstalled);
+        // Disable restores the preserved original; re-enable themes again.
+        assert(DecideReconcile({false, false, InstallObservation::OwnedReplacement, true}) == ReconcileAction::RestoreStock);
+        assert(DecideReconcile({true, available(0, true), InstallObservation::StockUnchanged, false}) == ReconcileAction::ApplyReplacement);
+        // Missing or unsupported resources: restore when owned, keep stock otherwise.
+        assert(DecideReconcile({true, available(0, false), InstallObservation::OwnedReplacement, true}) == ReconcileAction::RestoreStock);
+        assert(DecideReconcile({true, available(0, false), InstallObservation::StockUnchanged, false}) == ReconcileAction::KeepInstalled);
+        // Newer stock assignment: never overwritten while not owning it;
+        // themed again (adopting it as the recovery original) only when enabled.
+        assert(DecideReconcile({false, false, InstallObservation::StockChanged, false}) == ReconcileAction::KeepInstalled);
+        assert(DecideReconcile({true, available(0, true), InstallObservation::StockChanged, false}) == ReconcileAction::ApplyReplacement);
+        assert(DecideReconcile({true, available(0, false), InstallObservation::StockChanged, false}) == ReconcileAction::KeepInstalled);
+        // Nothing installed: untouched in every state.
+        assert(DecideReconcile({true, available(0, true), InstallObservation::NoDescription, false}) == ReconcileAction::KeepInstalled);
+        assert(DecideReconcile({false, false, InstallObservation::NoDescription, true}) == ReconcileAction::KeepInstalled);
+    }
+
+    // Seam-coupled routing: slider stems route only at the slider seam and the
+    // exact-name map never accepts them elsewhere (factory fail-open).
+    assert(RoutingSiteFor(Seam::SliderPackage) == Site::Slider);
+    assert(RoutingSiteFor(Seam::ButtonPackage) == Site::Setter);
+    assert(RoutingSiteFor(Seam::RoundPackage) == Site::Setter);
+    assert(BundleDirectoryForPackage("BrightnessControl", RoutingSiteFor(Seam::SliderPackage), 1) != nullptr);
+    assert(BundleDirectoryForPackage("BrightnessControl", RoutingSiteFor(Seam::ButtonPackage), 1) == nullptr);
+    // Unsupported resource per theme: timer under Pulsar restores owned state
+    // at the mapped seams but is supported under Plampy.
+    assert(BundleDirectoryForPackage("timer", RoutingSiteFor(Seam::ButtonPackage), 1) == nullptr);
+    assert(BundleDirectoryForPackage("timer", RoutingSiteFor(Seam::RoundPackage), 1) == nullptr);
+    assert(BundleDirectoryForPackage("timer", RoutingSiteFor(Seam::ButtonPackage), 0) != nullptr);
+    assert(DecideReconcile({true, false, InstallObservation::OwnedReplacement, false}) == ReconcileAction::RestoreStock);
+}
+
 int main() {
     TestApprovedValues();
     TestDedupPolicy();
@@ -171,5 +240,6 @@ int main() {
     TestRuntimeInstallDecision();
     TestReplacementRouting();
     TestAtomicFaultBoundary();
+    TestPackageReconcileTransitions();
     return 0;
 }

@@ -89,5 +89,73 @@ inline const char *BundleDirectoryForPackage(std::string_view name, Site site, i
     return nullptr; // dictionary-miss semantics: fail open
 }
 
+// ---- Live preference reconciliation policy (SP1) ----
+//
+// The three verified 21D50 setter seams (ABI map §2 rows 1-3) each carry a
+// stable integer identity across the shim/ARC boundary. The routing split
+// (exact-name map vs slider containsString: route) is derived, never assumed.
+enum class Seam : int {
+    ButtonPackage = 0, // CCUIButtonModuleView setGlyphPackageDescription:
+    RoundPackage = 1,  // CCUIRoundButton setGlyphPackageDescription:
+    SliderPackage = 2, // CCUIBaseSliderView setGlyphPackageDescription:
+};
+
+inline Site RoutingSiteFor(Seam seam) {
+    return seam == Seam::SliderPackage ? Site::Slider : Site::Setter;
+}
+
+// What the verified read-back (glyphPackageDescription) shows in a consumer
+// relative to the recorded original/applied pair:
+//   OwnedReplacement — our applied replacement is still installed (ownership
+//                      intact; restoration of the original is safe).
+//   StockUnchanged   — the preserved original stock description is installed
+//                      (stock untouched; nothing to restore).
+//   StockChanged     — a newer stock description we never saw through the
+//                      intercepted seams is installed. It is adopted as the
+//                      recovery original; restoration must never overwrite it.
+//   NoDescription    — the consumer currently has no package description;
+//                      nothing is owned or restored (fail open, untouched).
+enum class InstallObservation {
+    OwnedReplacement,
+    StockUnchanged,
+    StockChanged,
+    NoDescription,
+};
+
+inline InstallObservation ClassifyInstall(bool installedPresent, bool installedIsApplied,
+                                          bool installedIsOriginal) {
+    if (!installedPresent) return InstallObservation::NoDescription;
+    if (installedIsApplied) return InstallObservation::OwnedReplacement;
+    if (installedIsOriginal) return InstallObservation::StockUnchanged;
+    return InstallObservation::StockChanged;
+}
+
+enum class ReconcileAction {
+    KeepInstalled,    // leave the installed description untouched
+    ApplyReplacement, // install a freshly constructed owned replacement
+    RestoreStock,     // install the preserved original stock description
+};
+
+struct ReconcileFacts {
+    bool enabled;                // functional preference gate
+    bool replacementAvailable;   // factory produced a replacement for (stem, theme)
+    InstallObservation observation;
+    bool ownedThemeSatisfies;    // the recorded applied theme matches the current theme
+};
+
+// The complete reconcile decision table: disabled-start and re-enable,
+// Plampy<->Pulsar theme changes, disable/re-enable, missing or unsupported
+// resources, newer stock assignments (never overwritten), and consumers with
+// nothing installed all resolve here. Deterministic and side-effect free.
+inline ReconcileAction DecideReconcile(const ReconcileFacts &facts) {
+    if (facts.observation == InstallObservation::NoDescription) return ReconcileAction::KeepInstalled;
+    const bool owned = facts.observation == InstallObservation::OwnedReplacement;
+    if (facts.enabled && facts.replacementAvailable) {
+        return (owned && facts.ownedThemeSatisfies) ? ReconcileAction::KeepInstalled
+                                                   : ReconcileAction::ApplyReplacement;
+    }
+    return owned ? ReconcileAction::RestoreStock : ReconcileAction::KeepInstalled;
+}
+
 } // namespace caml_replacement
 #endif

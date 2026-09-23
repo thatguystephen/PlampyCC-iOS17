@@ -70,25 +70,51 @@ for name, (observer, original) in hooks.items():
 # The three package setters run the verified construct-and-pass route between
 # observation and the original call: the ARC-side factory returns a +1
 # replacement or nil (fail-open), the original receives argument = replacement
-# ?: description, and the +1 result is released exactly once after the
-# original invocation. The borrowed incoming description is never released.
+# ?: description, the owned/applied recovery state is recorded after the
+# original invocation, and the +1 result is released exactly once through the
+# shared MRR release helper. The borrowed incoming description is never
+# released.
 replacement_hooks = {
-    "CAMLButtonPackageHook": "CAMLCreateReplacementDescription(description, false)",
-    "CAMLRoundPackageHook": "CAMLCreateReplacementDescription(description, false)",
-    "CAMLSliderPackageHook": "CAMLCreateReplacementDescription(description, true)",
+    "CAMLButtonPackageHook": ("CAMLCreateReplacementDescription(self, description, false)",
+                              "CAMLRecordPackageInstall(self, description, argument, replacement != NULL, 0)"),
+    "CAMLRoundPackageHook": ("CAMLCreateReplacementDescription(self, description, false)",
+                             "CAMLRecordPackageInstall(self, description, argument, replacement != NULL, 1)"),
+    "CAMLSliderPackageHook": ("CAMLCreateReplacementDescription(self, description, true)",
+                              "CAMLRecordPackageInstall(self, description, argument, replacement != NULL, 2)"),
 }
-for name, factory_call in replacement_hooks.items():
+for name, (factory_call, record_call) in replacement_hooks.items():
     body = function_body(HOOKS, name)
     observer, original = hooks[name]
     assert_true(body.count(factory_call) == 1, f"{name} does not call the CAML replacement factory exactly once")
     assert_true(body.count("argument = replacement ? replacement : description") == 1, f"{name} does not select replacement-or-original exactly once")
-    assert_true(body.count("objc_release(replacement)") == 1, f"{name} does not release the +1 replacement exactly once")
-    assert_true("objc_release(description)" not in body, f"{name} releases the borrowed incoming description")
-    assert_true(body.index(observer) < body.index(factory_call) < body.index(original) < body.index("objc_release(replacement)"),
-                f"{name} does not preserve observe → replace → original → single-release ordering")
+    assert_true(body.count(record_call) == 1, f"{name} does not record the owned/applied recovery state exactly once")
+    assert_true(body.count("CAMLReleaseReplacement(replacement)") == 1, f"{name} does not release the +1 replacement exactly once")
+    assert_true("CAMLReleaseReplacement(description)" not in body, f"{name} releases the borrowed incoming description")
+    assert_true("objc_release" not in body, f"{name} depends on the unverified runtime release declaration")
+    assert_true(body.index(observer) < body.index(factory_call) < body.index(original) < body.index(record_call)
+                < body.index("CAMLReleaseReplacement(replacement)"),
+                f"{name} does not preserve observe → replace → original → record → single-release ordering")
 for name in ("CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook"):
     assert_true("CAMLCreateReplacementDescription" not in function_body(HOOKS, name),
                 f"{name} must not construct replacements")
+
+# The pinned-SDK release declaration risk is resolved with the MRR message
+# release form, centralized in exactly one shim helper whose declarations come
+# from Foundation; the runtime's release entry-point is never named.
+assert_true("objc_release" not in HOOKS, "the shim still depends on the unverified runtime release declaration")
+assert_true(HOOKS.count("[replacement release]") == 1, "the MRR release form is not centralized in exactly one helper body")
+assert_true("#import <Foundation/Foundation.h>" in HOOKS, "the MRR release form lacks its NSObject protocol declaration")
+release_body = function_body(HOOKS, "CAMLReleaseReplacement")
+assert_true(release_body.count("[replacement release]") == 1 and "description" not in release_body,
+            "the release helper does not release exactly one replacement and nothing else")
+
+# Reconcile-time invocations go through the shim's original-IMP slots, never
+# the intercepted hooks, so restoration cannot overwrite recovery state.
+invoke_body = function_body(HOOKS, "CAMLInvokeOriginalPackage")
+for slot in ("gOriginalButtonPackage", "gOriginalRoundPackage", "gOriginalSliderPackage"):
+    assert_true(slot in invoke_body, f"reconcile-time invoker omits the {slot} original slot")
+assert_true("sel_registerName(\"setGlyphPackageDescription:\")" in invoke_body, "reconcile-time invoker does not use the verified setter selector")
+assert_true(invoke_body.count(")(consumer, sel_registerName") == 1, "reconcile-time invoker performs more than one indirect call")
 
 # The functional replacement boundary is ARC-owned, fail-open, and limited to
 # the machine-verified declarations in CAMLVerifiedABI.h.
@@ -111,6 +137,39 @@ for needle in ("BundleDirectoryForPackage", "\"timer\", \"TimerModule.bundle\"",
     assert_true(needle in REPLACEMENT_CORE, f"replacement routing core omits {needle}")
 assert_true("CAMLReplacementCore.hpp" in (ROOT / "tests/native-caml-diagnostic.cpp").read_text(),
             "native test does not exercise the production replacement routing core")
+
+# SP1 live preference reconciliation: owned/applied recovery state, weak
+# consumer lifetime tracking, main-thread reconcile from the preference reload
+# seam, newest-stock preservation, and production-coupled transition tests
+# across all three verified setter seams.
+TWEAK = (ROOT / "src/Tweak.xm").read_text()
+native_test = (ROOT / "tests/native-caml-diagnostic.cpp").read_text()
+for token in ("ClassifyInstall", "DecideReconcile", "Seam::ButtonPackage", "Seam::RoundPackage", "Seam::SliderPackage"):
+    assert_true(token in native_test, f"native transition tests do not cover the production reconcile policy: {token}")
+assert_true("weakObjectsHashTable" in REPLACEMENT and "allObjects" in REPLACEMENT,
+            "package consumers are not tracked weakly for their lifetimes")
+for key in ('@"identifier"', '@"original"', '@"applied"', '@"appliedTheme"'):
+    assert_true(key in REPLACEMENT, f"package recovery state is not identity-aware: missing {key}")
+assert_true("plampy.packageOverride" in REPLACEMENT and "plampy.packageSeam" in REPLACEMENT,
+            "package recovery state is not association-scoped to the consumer")
+assert_true("CAMLRecordPackageInstall" in REPLACEMENT and "CAMLReconcilePackageConsumers" in REPLACEMENT,
+            "ARC module does not own the install record and reconcile pass")
+assert_true("ReadInstalledDescription(consumer, &probe)" in REPLACEMENT,
+            "factory does not require a verified recovery read-back before taking ownership of stock")
+assert_true("SameDescription" in REPLACEMENT and "ClassifyInstall" in REPLACEMENT and "DecideReconcile" in REPLACEMENT,
+            "reconcile does not run the production classification and decision policy")
+assert_true("CAMLInvokeOriginalPackage(seam, consumer" in REPLACEMENT,
+            "reconcile does not invoke setters through the original-IMP slots")
+assert_true("NSThread isMainThread" in REPLACEMENT and "dispatch_async(dispatch_get_main_queue()" in REPLACEMENT,
+            "reconcile and record updates do not stay on the main thread")
+assert_true("ReconcileWallpaper(overlay);\n        CAMLReconcilePackageConsumers();" in TWEAK,
+            "preference reloads do not reconcile package consumers alongside the static state")
+assert_true("valueForKey" not in REPLACEMENT and "setValue" not in REPLACEMENT,
+            "the replacement route mutates private description state")
+assert_true("glyphPackageDescription" in REPLACEMENT and "glyphPackageDescription" in VERIFIED_ABI,
+            "the recovery read-back is not limited to the verified ABI declarations")
+assert_true("CAML-REPLACEMENT-IMPLEMENTATION.md" not in REPLACEMENT and "CAML-ROUTING-BLOCKER.md" in REPLACEMENT,
+            "the replacement module still points at the stale documentation")
 
 assert_true("return gOriginalFactory ? ((id(*)(__unsafe_unretained id, SEL, __unsafe_unretained id, __unsafe_unretained id))gOriginalFactory)(self, cmd, packageName, bundle) : nil;" in HOOKS, "factory does not return the original result")
 for name in hooks:
