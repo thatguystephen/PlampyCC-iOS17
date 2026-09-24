@@ -47,7 +47,55 @@ def run(command: list[str]) -> str:
     return subprocess.run(command, check=True, capture_output=True, text=True).stdout
 
 
-def source_order(source: str) -> None:
+def function_body(source: str, name: str) -> str:
+    match = re.search(rf"\b{re.escape(name)}\s*\(", source)
+    if match is None:
+        raise SystemExit(f"missing function {name}")
+    opening = source.find("{", match.start())
+    if opening < 0:
+        raise SystemExit(f"missing function body for {name}")
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening + 1:index]
+    raise SystemExit(f"unterminated function {name}")
+
+
+def verify_shared_directory_walk(source: str, io_source: str) -> None:
+    production_walk = function_body(source, "OpenDiagnosticDirectory")
+    helper_call = "caml_diag::OpenDirectoryUnderTrustedPrefix("
+    if '#include "CAMLDiagnosticIO.hpp"' not in source or production_walk.count(helper_call) != 1:
+        raise SystemExit("production does not delegate exactly once to the shared directory walker")
+
+    shared_walk = function_body(io_source, "OpenDirectoryUnderTrustedPrefix")
+    leaf_detection = "bool leaf = *cursor == '\\0';"
+    leaf_validation = "ValidateDirectoryDescriptor(adapter, next, leaf, effectiveUser)"
+    leaf_termination = "if (leaf) break;"
+    required = (leaf_detection, leaf_validation, "current = next;", leaf_termination)
+    if any(token not in shared_walk for token in required):
+        raise SystemExit("shared directory walker lacks explicit final-component detection, validation, or termination")
+    if not (shared_walk.index(leaf_detection) < shared_walk.index(leaf_validation)
+            < shared_walk.index("current = next;") < shared_walk.index(leaf_termination)):
+        raise SystemExit("shared directory walker does not validate and retain the final component before terminating")
+
+
+def verify_missing_termination_is_rejected(source: str, io_source: str) -> None:
+    termination = "if (leaf) break;"
+    if io_source.count(termination) != 1:
+        raise SystemExit("shared directory walker termination fixture is ambiguous")
+    malformed = io_source.replace(termination, "/* final-component termination removed */", 1)
+    try:
+        verify_shared_directory_walk(source, malformed)
+    except SystemExit:
+        return
+    raise SystemExit("artifact source gate accepted a shared walker without explicit final-component termination")
+
+
+def source_order(source: str, io_source: str) -> None:
     constructor_start = source.index("InitializeCAMLDiagnostic")
     constructor = source[constructor_start:]
     storage = constructor.index("CAMLDiagnosticSite sites[kDiagnosticSiteCount] = {}")
@@ -66,9 +114,8 @@ def source_order(source: str) -> None:
     for name in ("CAMLButtonPackageHook", "CAMLRoundPackageHook", "CAMLSliderPackageHook", "CAMLFactoryHook", "CAMLButtonStateHook", "CAMLSliderStateHook", "CAMLLowPowerDescriptionHook"):
         if re.search(rf"\b{name}\s*\([^;]*\)\s*\{{", source):
             raise SystemExit(f"replacement IMP body remains in diagnostic source: {name}")
-    walker = source[source.index("OpenDiagnosticDirectory"):source.index("ReadExistingEvents")]
-    if "if (leaf) break;" not in walker or "bool leaf = *cursor == '\\0'" not in walker:
-        raise SystemExit("final component traversal termination is not explicit")
+    verify_shared_directory_walk(source, io_source)
+    verify_missing_termination_is_rejected(source, io_source)
 
 
 def observer_instruction_ranges(symbols: str, disassembly: str) -> dict[str, str]:
@@ -350,9 +397,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("artifact", type=Path)
     parser.add_argument("--source", type=Path, default=Path("src/CAMLDiagnostic.xm"))
+    parser.add_argument("--io-source", type=Path, default=Path("src/CAMLDiagnosticIO.hpp"))
     args = parser.parse_args()
-    source_order(args.source.read_text())
-    pass_gate(1, "source descriptor/admission order")
+    source_order(args.source.read_text(), args.io_source.read_text())
+    pass_gate(1, "source descriptor/admission order and shared directory-walker termination")
     companions = {}
     for number, architecture in ((2, "arm64"), (4, "arm64e")):
         companion = args.artifact / "symbols" / architecture / "PlampyCC.dylib"
