@@ -52,7 +52,6 @@ extern caml_diag::SyscallAdapter gDarwinSyscalls;
 static constexpr size_t kDiagnosticSiteCount = 7;
 static constexpr size_t kRingCapacity = caml_diag::RingPolicy::kCapacity;
 static constexpr size_t kSerializedEventCapacity = caml_diag::RingPolicy::kSerializedEventCapacity;
-static constexpr size_t kDiagnosticPathCapacity = PATH_MAX;
 static constexpr size_t kDiagnosticRetentionBytes = 1024 * 1024;
 
 static std::atomic<bool> gDiagnosticVerbose(false);
@@ -254,14 +253,14 @@ static NSString *DiagnosticOutputDirectory(void) {
     return ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic");
 }
 
-static bool ValidateDirectoryFD(int descriptor, bool leaf) {
-    struct stat status = {};
-    if (gDarwinSyscalls.stat(gDarwinSyscalls.context, descriptor, &status) != 0 ||
-        !S_ISDIR(status.st_mode)) return false;
-    if (leaf && status.st_uid != geteuid()) return false;
-    if (leaf) return (status.st_mode & 0777) == 0700;
-    return (status.st_mode & 0022) == 0;
+static NSString *DiagnosticTrustedPrefix(void) {
+    // /var and /var/jb are platform-managed symlinks. Resolve this allowlisted
+    // prefix once, then keep the tweak-owned suffix descriptor-confined.
+    return ROOT_PATH_NS(@"/var/mobile/Library");
 }
+
+static constexpr const char *kDiagnosticOwnedSuffix =
+    "Application Support/PlampyCC/CAML-Diagnostic";
 
 static bool ValidateEventFD(int descriptor, size_t *size) {
     struct stat status = {};
@@ -278,50 +277,15 @@ static bool OpenDiagnosticDirectory(int *descriptor) {
     *descriptor = -1;
     @try {
         NSString *directory = DiagnosticOutputDirectory();
+        NSString *trustedPrefix = DiagnosticTrustedPrefix();
         const char *source = directory.fileSystemRepresentation;
-        if (!source) return false;
-        char path[kDiagnosticPathCapacity] = {};
-        if (strlcpy(path, source, sizeof(path)) >= sizeof(path)) return false;
-        caml_diag::PathComponents parsedPath;
-        if (!caml_diag::ParsePathComponents(path, &parsedPath)) return false;
-        (void)parsedPath;
-
-        CAMLScopedFD current(gDarwinSyscalls.openAt(gDarwinSyscalls.context, AT_FDCWD, "/",
-                                                      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW, 0));
-        if (!current.Valid() || !ValidateDirectoryFD(current.get(), false)) return false;
-        char *cursor = path;
-        bool sawComponent = false;
-        for (;;) {
-            while (*cursor == '/') ++cursor;
-            if (*cursor == '\0') break;
-            char *component = cursor;
-            while (*cursor != '\0' && *cursor != '/') ++cursor;
-            if (*cursor == '/') {
-                *cursor = '\0';
-                ++cursor;
-            }
-            while (*cursor == '/') ++cursor;
-            bool leaf = *cursor == '\0';
-            if (component[0] == '\0' || strcmp(component, ".") == 0 || strcmp(component, "..") == 0)
-                return false;
-            CAMLScopedFD next(gDarwinSyscalls.openAt(
-                gDarwinSyscalls.context, current.get(), component,
-                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW, 0));
-            if (!next.Valid() && errno == ENOENT) {
-                if (gDarwinSyscalls.makeDirectoryAt(gDarwinSyscalls.context, current.get(), component, 0700) != 0 &&
-                    errno != EEXIST) return false;
-                next.Reset(gDarwinSyscalls.openAt(
-                    gDarwinSyscalls.context, current.get(), component,
-                    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW, 0));
-            }
-            if (!next.Valid() || !ValidateDirectoryFD(next.get(), leaf)) return false;
-            if (!current.Reset(next.Release())) return false;
-            sawComponent = true;
-            if (leaf) break;
-        }
-        if (!sawComponent) return false;
-        *descriptor = current.Release();
-        return true;
+        const char *prefix = trustedPrefix.fileSystemRepresentation;
+        if (!source || !prefix) return false;
+        size_t prefixLength = strlen(prefix);
+        if (strncmp(source, prefix, prefixLength) != 0 || source[prefixLength] != '/' ||
+            strcmp(source + prefixLength + 1, kDiagnosticOwnedSuffix) != 0) return false;
+        return caml_diag::OpenDirectoryUnderTrustedPrefix(
+            gDarwinSyscalls, prefix, kDiagnosticOwnedSuffix, geteuid(), descriptor);
     } @catch (...) {
         return false;
     }

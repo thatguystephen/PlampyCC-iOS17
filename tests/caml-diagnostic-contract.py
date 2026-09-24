@@ -244,6 +244,21 @@ assert_true("RuntimeInstallDecision::Installed" in function_body(SOURCE, "Instal
 assert_true("DecideRuntimeInstall" in (ROOT / "tests/native-caml-diagnostic.cpp").read_text(), "native runtime metadata decision coverage is missing")
 assert_true("makeDirectoryAt" in IO and "stat" in IO, "directory creation/stat operations are outside the injected adapter")
 assert_true("DarwinMakeDirectoryAt" in SOURCE and "DarwinStat" in SOURCE, "production directory/stat adapter callbacks are missing")
+directory_walk = function_body(IO, "OpenDirectoryUnderTrustedPrefix")
+assert_true("O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0" in directory_walk,
+            "trusted platform prefix is not acquired once with normal symlink resolution")
+assert_true(directory_walk.count("O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW") == 2
+            and "makeDirectoryAt(adapter.context, current, component, 0700)" in directory_walk,
+            "tweak-owned suffix does not retain no-follow open/retry plus mkdir 0700")
+assert_true("ValidateDirectoryDescriptor(adapter, next, leaf, effectiveUser)" in directory_walk
+            and "status.st_uid != effectiveUser" in IO
+            and "(status.st_mode & 0777) == 0700" in IO,
+            "tweak-owned suffix no longer enforces descriptor uid/mode validation")
+production_walk = function_body(SOURCE, "OpenDiagnosticDirectory")
+assert_true("caml_diag::OpenDirectoryUnderTrustedPrefix" in production_walk
+            and "DiagnosticTrustedPrefix()" in production_walk
+            and "kDiagnosticOwnedSuffix" in production_walk,
+            "production does not use the shared trusted-prefix directory walk")
 
 # All non-ObjC policies are single-source production helpers. The host test
 # compiles those exact headers; it is not a Python behavioral reimplementation.
@@ -261,6 +276,19 @@ assert_true('ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAM
             "diagnostic output must stay under the mobile-writable root")
 assert_true('ROOT_PATH_NS(@"/Library/Application Support/PlampyCC/CAML-Diagnostic")' not in output_directory,
             "diagnostic output must not use the root-owned system asset root")
+trusted_prefix = function_body(SOURCE, "DiagnosticTrustedPrefix")
+assert_true('ROOT_PATH_NS(@"/var/mobile/Library")' in trusted_prefix
+            and 'ROOT_PATH_NS(@"/var/jb' not in trusted_prefix,
+            "trusted platform prefix must preserve exactly one ROOT_PATH_NS rootless prefix")
+output_test_source = (ROOT / "tests/caml-diagnostic-output.py").read_text()
+walk_test_source = (ROOT / "tests/native-caml-directory-walk.cpp").read_text()
+assert_true("OUTPUT_SUFFIX" in output_test_source and 'symlink_to("private/var"' in output_test_source
+            and 'symlink_to("../../relocated-root"' in output_test_source,
+            "output regression does not drive the fixture from OUTPUT_SUFFIX with rootless symlink topology")
+assert_true("OpenDirectoryUnderTrustedPrefix" in walk_test_source
+            and "legacy all-component no-follow walk" in walk_test_source
+            and "events.jsonl" in walk_test_source,
+            "executable regression does not run the shared production walk and baseline failure")
 assert_true("CAML-Diagnostic" in DOC and "/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl" in DOC,
             "implementation document does not name the mobile-writable diagnostic output path")
 assert_true("plampycc-caml-observer-v2" in DOC and "plampycc-caml-observer-v2-diag" in DOC and "plampycc-caml-observer-v1" not in DOC,
