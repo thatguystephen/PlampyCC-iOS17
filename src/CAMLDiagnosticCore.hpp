@@ -22,15 +22,53 @@ static constexpr const char *kApprovedPackages[] = {
     "AirplaneMode", "Bluetooth", "Calculator", "Camera", "Flashlight",
     "Focus", "LowPower", "MusicRecognition", "Timer", "WiFi"
 };
-// Glyph-trace outcomes (see evidence/flashlight-compact-glyph-21D50.md): one
-// fixed token per reconciler decision, so a flushed record discriminates the
-// ranked flashlight causes without any free-form text.
+// The serialized state field (event key "g") is emitted with the %.12s wire
+// precision in CAMLDiagnostic.xm (SerializeEvent). Every approved state token
+// must fit that precision so the documented token is the literal an operator
+// reads in events.jsonl — truncation is never the discriminator. The
+// uniqueness/length enforcement below and tests/glyph-trace-contract.py keep
+// this constant equal to the serializer's %.12s precision.
+static constexpr size_t kStateWirePrecision = 12;
+// Glyph-trace outcomes (see docs/FLASHLIGHT-DIAGNOSTIC.md): one fixed token per
+// reconciler decision, so a flushed record discriminates the ranked flashlight
+// causes without any free-form text. Each glyph-trace token is at most 12
+// characters and unique as documented.
 static constexpr const char *kApprovedStates[] = {
     "default", "disabled", "expanded", "highlighted", "collapsed", "off", "on", "selected",
-    "glyph-applied", "glyph-selected-applied", "generic-applied",
-    "skip-disabled", "skip-no-image", "skip-no-api", "skip-nil-glyph", "skip-no-icon",
-    "stability-kept", "stability-replaced", "stability-missing", "stability-deallocated"
+    "glyph-appl", "glyph-sel-ap", "generic-app",
+    "skip-disable", "skip-no-img", "skip-no-api", "skip-nil", "skip-id-nil", "skip-no-icon",
+    "stable-kept", "stable-repl", "stable-miss", "stable-gone"
 };
+namespace detail {
+inline constexpr size_t TokenLength(const char *token, size_t index = 0) {
+    return token[index] == '\0' ? index : TokenLength(token, index + 1);
+}
+inline constexpr bool TokenEqual(const char *left, const char *right) {
+    return *left != *right ? false
+         : (*left == '\0' ? true : TokenEqual(left + 1, right + 1));
+}
+inline constexpr bool TokenIsUnique(const char *const *tokens, size_t count,
+                                    size_t index, size_t cursor = 0) {
+    return cursor == count ? true
+         : (cursor == index ? TokenIsUnique(tokens, count, index, cursor + 1)
+                            : (TokenEqual(tokens[cursor], tokens[index])
+                                   ? false
+                                   : TokenIsUnique(tokens, count, index, cursor + 1)));
+}
+inline constexpr bool TokensFitWire(const char *const *tokens, size_t count,
+                                    size_t index = 0) {
+    return index == count ? true
+         : ((TokenLength(tokens[index]) <= kStateWirePrecision &&
+             TokenIsUnique(tokens, count, index))
+                ? TokensFitWire(tokens, count, index + 1)
+                : false);
+}
+} // namespace detail
+// Compile-time contract: approved state tokens serialize exactly as named and
+// stay distinguishable from one another under the wire precision.
+static_assert(detail::TokensFitWire(kApprovedStates,
+                                    sizeof(kApprovedStates) / sizeof(kApprovedStates[0])),
+              "approved state tokens must fit the %.12s wire precision and stay unique");
 // Flashlight compact-button topology candidates (21D50): the host class and
 // the _viewControllerForAncestor result must both stay distinguishable from
 // "unknown-class" for the trace to answer the ownership question.

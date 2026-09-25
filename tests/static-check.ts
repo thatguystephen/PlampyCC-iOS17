@@ -109,7 +109,10 @@ assert(source.includes("plampy.glyphOverride") && source.includes("state[@\"iden
 assert(source.includes("CCUIFlashlightModuleViewController") && source.includes("plampy.flashlightGlyphs") && source.includes("FlashlightOff") && source.includes("FlashlightOn"), "Flashlight selected/unselected static glyph ownership is missing");
 assert(source.includes("ReleaseFlashlightGlyphs") && source.includes("@selector(setSelectedGlyphImage:)"), "Flashlight stock glyph restoration seam is missing");
 assert(!source.includes("plampy.originalGlyph") && !source.includes("OBJC_ASSOCIATION_ASSIGN"), "glyph/wallpaper state uses stale non-owned association semantics");
-assert(source.includes("if (!current) {\n        ReleaseGlyphOverride(view);"), "missing replacement does not release an owned glyph safely");
+// The nil-glyph bail releases the owned override. An allowlisted trace token
+// may be recorded first (before the release); the release must still follow in
+// the same block.
+assert(/if \(!current\) \{\n(\s+TraceGlyph\(view, "[a-z-]+"\);\n)?\s+ReleaseGlyphOverride\(view\);/.test(source), "missing replacement does not release an owned glyph safely");
 assert(source.includes("[blur removeFromSuperview]") && source.includes("objc_setAssociatedObject(self, \"plampy.blur\", nil"), "wallpaper teardown does not release blur state");
 assert(source.includes("wall.alpha = [objc_getAssociatedObject(self, \"plampy.presented\") boolValue] ? 1 : 0"), "wallpaper reconciliation does not derive presentation visibility");
 assert(source.includes("objc_setAssociatedObject(self, \"plampy.presented\", @YES") && source.includes("@NO"), "presentation state is not tracked");

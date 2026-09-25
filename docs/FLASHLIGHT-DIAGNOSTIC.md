@@ -32,19 +32,25 @@ compile-time diagnostic gate and shared ring/allowlist/dedup path.
 ## Diagnostic fields and interpretation
 
 `events.jsonl` records the existing view tag and approved ancestor class. The
-new `state` tokens are:
+The serialized `state` field (`g`) uses a `%.12s` wire precision. Every
+approved state token is therefore unique and no longer than 12 characters;
+`CAMLDiagnosticCore.hpp` enforces that contract at compile time. The literal
+values in `events.jsonl` are:
 
-- `skip-disabled`, `skip-no-api`, `skip-no-image`, `skip-nil-glyph`,
+- `skip-disable`, `skip-no-api`, `skip-no-img`, `skip-nil`, `skip-id-nil`,
   `skip-no-icon`: a ranked admission/bail cause;
-- `glyph-applied`, `glyph-selected-applied`, `generic-applied`: an image was
-  written by the corresponding reconcile path;
-- `stability-kept`, `stability-replaced`, `stability-missing`,
-  `stability-deallocated`: a read-only check two seconds after application.
+- `glyph-appl`, `glyph-sel-ap`, `generic-app`: an image was written by the
+  corresponding reconcile path;
+- `stable-kept`, `stable-repl`, `stable-miss`, `stable-gone`: a read-only check
+  two seconds after application.
 
-`stability-replaced` is the discriminator for a post-reconcile overwrite;
-`skip-*` plus `unknown-class` identifies topology/admission failure. The probe
-never invokes a setter, layout invalidation, or recursive reconcile, so it
-cannot recreate the prior watchdog loop.
+`stable-repl` is the discriminator for a post-reconcile overwrite;
+`skip-*` plus `unknown-class` identifies topology/admission failure. The
+identifier-change nil-glyph bail emits `skip-id-nil` before returning, so a
+stock glyph disappearing during identity recovery remains observable. The
+observer site labels are `glyph-recon` and `glyph-probe`; they are also
+bounded and allowlisted. The probe never invokes a setter, layout invalidation,
+or recursive reconcile, so it cannot recreate the prior watchdog loop.
 
 ## Authorized device collection sequence
 
@@ -62,10 +68,10 @@ Run only under a separate device-authorized task:
    same artifact.
 4. Group records by `site` and `viewTag`; compare `ancestorClass` and `state`.
    Expected decisive outcomes:
-   - no `glyph-reconcile` record: admission/initialization gate;
+   - no `glyph-recon` record: admission/initialization gate;
    - `skip-no-icon` or `unknown-class`: ownership/topology mismatch;
-   - `glyph-applied` followed by `stability-replaced`: later overwrite;
-   - `glyph-applied` plus `stability-kept` but stock display: selected-slot or
+   - `glyph-appl` followed by `stable-repl`: later overwrite;
+   - `glyph-appl` plus `stable-kept` but stock display: selected-slot or
      rendering mismatch, not a missing write.
 5. Flush at the existing dismissal seam, then verify the file contains only
    allowlisted package/state/class values. Delete the diagnostic artifact after

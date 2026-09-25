@@ -78,12 +78,12 @@ static void SetSelectedGlyphImage(id view, UIImage *image) {
     ((void(*)(id, SEL, id))objc_msgSend)(view, @selector(setSelectedGlyphImage:), image);
 }
 static BOOL SameImage(UIImage *left, UIImage *right) { return left == right || [left isEqual:right]; }
-// Diagnostic glyph trace (evidence/flashlight-compact-glyph-21D50.md): one
+// Diagnostic glyph trace (docs/FLASHLIGHT-DIAGNOSTIC.md): one
 // approved outcome token per reconciler decision. ObserveGlyph is a pure
 // observer behind the collector's compile-time gate and admission check, so
 // release builds record nothing and reconciliation behavior is unchanged.
 static void TraceGlyph(id view, const char *outcome) {
-    ObserveGlyph(view, outcome, "glyph-reconcile");
+    ObserveGlyph(view, outcome, "glyph-recon");
 }
 // Post-apply stability probe: re-reads the glyph slot after a short delay to
 // distinguish "we never applied" from "we applied and something re-wrote the
@@ -97,14 +97,14 @@ static void ScheduleGlyphStabilityCheck(id view, UIImage *appliedGlyph) {
                    dispatch_get_main_queue(), ^{
         id strongView = weakView;
         if (!strongView) {
-            ObserveGlyph(nil, "stability-deallocated", "glyph-stability");
+            ObserveGlyph(nil, "stable-gone", "glyph-probe");
             return;
         }
         UIImage *current = GlyphImage(strongView);
-        const char *outcome = !current ? "stability-missing"
-                             : SameImage(current, expected) ? "stability-kept"
-                             : "stability-replaced";
-        ObserveGlyph(strongView, outcome, "glyph-stability");
+        const char *outcome = !current ? "stable-miss"
+                             : SameImage(current, expected) ? "stable-kept"
+                             : "stable-repl";
+        ObserveGlyph(strongView, outcome, "glyph-probe");
     });
 }
 static id AncestorController(id view) {
@@ -155,14 +155,14 @@ static void ReconcileFlashlightView(id view) {
     // in the glyph slot instead of being silently skipped.
     BOOL applySelected = canSelected && selected != nil;
     if (!gEnabled || !unselected || !canGlyph) {
-        TraceGlyph(view, !gEnabled ? "skip-disabled"
-                                  : (!canGlyph ? "skip-no-api" : "skip-no-image"));
+        TraceGlyph(view, !gEnabled ? "skip-disable"
+                                  : (!canGlyph ? "skip-no-api" : "skip-no-img"));
         ReleaseFlashlightGlyphs(view);
         return;
     }
     UIImage *currentGlyph = GlyphImage(view);
     if (!currentGlyph) {
-        TraceGlyph(view, "skip-nil-glyph");
+        TraceGlyph(view, "skip-nil");
         ReleaseFlashlightGlyphs(view);
         return;
     }
@@ -184,7 +184,7 @@ static void ReconcileFlashlightView(id view) {
                                 @"originalSelected": originalSelected,
                                 @"appliedSelected": appliedSelected },
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    TraceGlyph(view, applySelected ? "glyph-selected-applied" : "glyph-applied");
+    TraceGlyph(view, applySelected ? "glyph-sel-ap" : "glyph-appl");
     ScheduleGlyphStabilityCheck(view, unselected);
 }
 
@@ -207,15 +207,15 @@ static void ReconcileGlyphView(id view) {
     BOOL canRead = [view respondsToSelector:@selector(glyphImage)];
     BOOL canWrite = [view respondsToSelector:@selector(setGlyphImage:)];
     if (!gEnabled || !icon || !image || !canRead || !canWrite) {
-        TraceGlyph(view, !gEnabled ? "skip-disabled"
+        TraceGlyph(view, !gEnabled ? "skip-disable"
                                   : (!canRead || !canWrite ? "skip-no-api"
-                                                          : (!icon ? "skip-no-icon" : "skip-no-image")));
+                                                          : (!icon ? "skip-no-icon" : "skip-no-img")));
         ReleaseGlyphOverride(view);
         return;
     }
     UIImage *current = GlyphImage(view);
     if (!current) {
-        TraceGlyph(view, "skip-nil-glyph");
+        TraceGlyph(view, "skip-nil");
         ReleaseGlyphOverride(view);
         return;
     }
@@ -223,13 +223,16 @@ static void ReconcileGlyphView(id view) {
         ReleaseGlyphOverride(view);
         state = nil;
         current = GlyphImage(view);
-        if (!current) return;
+        if (!current) {
+            TraceGlyph(view, "skip-id-nil");
+            return;
+        }
     }
     UIImage *original = state ? state[@"original"] : current;
     if (state && !SameImage(current, state[@"applied"])) original = current;
     if (!SameImage(current, image)) SetGlyphImage(view, image);
     objc_setAssociatedObject(view, "plampy.glyphOverride", @{ @"identifier": identifier, @"original": original, @"applied": image }, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    TraceGlyph(view, "generic-applied");
+    TraceGlyph(view, "generic-app");
     ScheduleGlyphStabilityCheck(view, image);
 }
 static void buttonLayout(id self, SEL cmd) {

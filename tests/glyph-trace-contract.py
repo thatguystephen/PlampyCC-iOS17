@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Never
 
@@ -19,7 +20,6 @@ def fail(message: str) -> Never:
 def assert_true(value: bool, message: str) -> None:
     if not value:
         fail(message)
-
 
 def function_body(text: str, name: str) -> str:
     match = re.search(rf"\b{re.escape(name)}\s*\(", text)
@@ -45,26 +45,27 @@ def allowlist(name: str) -> list[str]:
 
 
 # Decision-table model of the reconciler. Each ranked cause from
-# evidence/flashlight-compact-glyph-21D50.md must map to exactly one outcome
+# docs/FLASHLIGHT-DIAGNOSTIC.md must map to exactly one outcome
 # token, so one flushed trace separates the causes without free-form text.
 def classify(*, enabled: bool, theme_image: bool, glyph_api: bool,
              glyph_slot: bool, icon_mapped: bool, applied: bool,
-             supported_selected: bool, stable: bool | None = None) -> str:
+             supported_selected: bool, stable: bool | None = None,
+             identifier_changed: bool = False) -> str:
     if stable is not None:
-        return "stability-kept" if stable else "stability-replaced"
+        return "stable-kept" if stable else "stable-repl"
     if not enabled:
-        return "skip-disabled"
+        return "skip-disable"
     if not glyph_api:
         return "skip-no-api"
     if not theme_image:
-        return "skip-no-image"
+        return "skip-no-img"
     if not glyph_slot:
-        return "skip-nil-glyph"
+        return "skip-id-nil" if identifier_changed else "skip-nil"
     if applied:
-        return "glyph-selected-applied" if supported_selected else "glyph-applied"
+        return "glyph-sel-ap" if supported_selected else "glyph-appl"
     if not icon_mapped:
         return "skip-no-icon"
-    return "generic-applied"
+    return "generic-app"
 
 
 ranked_causes = {
@@ -84,6 +85,11 @@ ranked_causes = {
                                        glyph_api=True, glyph_slot=False,
                                        icon_mapped=True, applied=False,
                                        supported_selected=False),
+    "identifier-change-nil-glyph": classify(enabled=True, theme_image=True,
+                                             glyph_api=True, glyph_slot=False,
+                                             icon_mapped=True, applied=False,
+                                             supported_selected=False,
+                                             identifier_changed=True),
     "applied-glyph-slot": classify(enabled=True, theme_image=True,
                                    glyph_api=True, glyph_slot=True,
                                    icon_mapped=True, applied=True,
@@ -109,20 +115,100 @@ assert_true(
     ranked_causes["hook-admission-or-branch-miss"] == "skip-no-icon",
     "generic-path miss must record skip-no-icon (topology discriminator)",
 )
+assert_true(
+    ranked_causes["identifier-change-nil-glyph"] == "skip-id-nil",
+    "the identifier-change nil-glyph bail must record its own observable token",
+)
 
 # Privacy contract: every outcome literal the reconciler can emit is an
 # approved token and can never carry a path fragment.
 states = allowlist("kApprovedStates")
 classes = allowlist("kApprovedClasses")
-emitted = set(re.findall(r'"((?:skip|glyph|generic|stability)[a-z-]*)"', SOURCE))
-emitted -= {"glyph-reconcile", "glyph-stability"}  # observer site labels, not outcomes
+site_labels = {"glyph-recon", "glyph-probe"}  # observer site labels, not outcomes
+trace_bodies = "\n".join(function_body(SOURCE, name) for name in
+                         ("TraceGlyph", "ScheduleGlyphStabilityCheck",
+                          "ReconcileFlashlightView", "ReconcileGlyphView"))
+emitted = set(re.findall(r'"([a-z]+(?:-[a-z]+)+)"', trace_bodies)) - site_labels
 assert_true(bool(emitted), "no glyph trace outcomes found in the reconciler")
 unknown = emitted - set(states)
 assert_true(not unknown, f"reconciler emits non-approved outcome tokens: {sorted(unknown)}")
 assert_true(
-    all("/" not in token and len(token) < 32 for token in emitted),
-    "outcome tokens must stay fragment-free and bounded",
+    all("/" not in token for token in emitted),
+    "outcome tokens must stay fragment-free",
 )
+expected_outcomes = {
+    "skip-disable", "skip-no-api", "skip-no-img", "skip-nil", "skip-id-nil",
+    "skip-no-icon", "glyph-appl", "glyph-sel-ap", "generic-app",
+    "stable-kept", "stable-repl", "stable-miss", "stable-gone",
+}
+assert_true(
+    emitted == expected_outcomes,
+    f"reconciler outcome token set changed: {sorted(emitted ^ expected_outcomes)}",
+)
+assert_true(
+    set(ranked_causes.values()) <= emitted,
+    "a ranked cause maps to a token the reconciler cannot emit",
+)
+
+# Wire-accuracy contract: the serialized state field (key "g") is emitted with
+# a bounded printf precision, so a token longer than that precision would reach
+# events.jsonl as a truncation prefix no operator could match against the docs.
+# Allowlist length, token uniqueness, serializer precision, and the policy
+# constant must agree: tokens serialize exactly as named, never by truncation.
+wire_match = re.search(r'\\"g\\":\\"%\.(\d+)s\\"', DIAG)
+site_wire_match = re.search(r'\\"s\\":\\"%\.(\d+)s\\"', DIAG)
+constant_match = re.search(r"kStateWirePrecision = (\d+)", CORE)
+assert_true(wire_match is not None and site_wire_match is not None,
+            "serialized state/site wire precisions are missing from the collector")
+assert_true(constant_match is not None,
+            "kStateWirePrecision is missing from the policy header")
+wire = int(wire_match.group(1))
+site_wire = int(site_wire_match.group(1))
+assert_true(
+    int(constant_match.group(1)) == wire,
+    "kStateWirePrecision does not match the serializer's state-field precision",
+)
+assert_true(
+    all(len(token) <= wire for token in states),
+    f"approved state tokens exceed the {wire}-character state wire limit: "
+    f"{sorted(token for token in states if len(token) > wire)}",
+)
+assert_true(len(set(states)) == len(states), "approved state tokens are not unique")
+assert_true(
+    all(len(token) <= wire for token in emitted),
+    f"outcome tokens exceed the {wire}-character state wire limit",
+)
+assert_true(
+    all(len(label) <= site_wire for label in site_labels),
+    f"glyph trace site labels exceed the {site_wire}-character site wire limit",
+)
+
+# Documentation contract: the doc must list every emitted wire value literally
+# (an operator greps events.jsonl for the documented name) and must not name
+# tokens the trace cannot emit.
+DOC_PATH = "docs/FLASHLIGHT-DIAGNOSTIC.md"
+DOC = (ROOT / DOC_PATH).read_text()
+for token in sorted(emitted | site_labels):
+    assert_true(f"`{token}`" in DOC,
+                f"wire value missing from {DOC_PATH}: {token}")
+documented = set(re.findall(r"`((?:skip|glyph|generic|stable)[a-z-]*)`", DOC))
+stale = documented - emitted - site_labels
+assert_true(not stale, f"{DOC_PATH} documents tokens the trace cannot emit: {sorted(stale)}")
+
+# Evidence cross-reference contract: the cited source path must exist and be
+# committed, not an untracked scratch note.
+def committed(path: str) -> bool:
+    return subprocess.run(["git", "ls-files", "--error-unmatch", path],
+                          cwd=ROOT, capture_output=True).returncode == 0
+
+
+assert_true((ROOT / DOC_PATH).exists() and committed(DOC_PATH),
+            "the glyph trace citation must target a committed, valid source path")
+assert_true(SOURCE.count(DOC_PATH) >= 1 and CORE.count(DOC_PATH) >= 1,
+            "glyph trace sources must cite the committed diagnostic documentation")
+for text in (SOURCE, CORE, DIAG):
+    assert_true("evidence/flashlight-compact-glyph-" not in text,
+                "glyph trace sources still cite the uncommitted evidence note")
 
 # Topology evidence contract: host and ancestor classes the diagnosis depends
 # on must be approved, or the trace collapses them to unknown-class.
@@ -138,12 +224,16 @@ generic = function_body(SOURCE, "ReconcileGlyphView")
 trace = function_body(SOURCE, "TraceGlyph")
 stability = function_body(SOURCE, "ScheduleGlyphStabilityCheck")
 assert_true(
-    flashlight.count("TraceGlyph(") >= 3 and generic.count("TraceGlyph(") >= 3,
+    flashlight.count("TraceGlyph(") >= 3 and generic.count("TraceGlyph(") >= 4,
     "reconciler decision points are not all traced",
 )
 assert_true(
     flashlight.index("TraceGlyph(") < flashlight.index("ReleaseFlashlightGlyphs(view)"),
     "bail outcomes must be recorded before the override is released",
+)
+assert_true(
+    re.search(r'if \(!current\) \{\s*TraceGlyph\(view, "skip-id-nil"\);\s*return;', generic),
+    "the identifier-change nil-glyph bail must record skip-id-nil before returning",
 )
 assert_true("ScheduleGlyphStabilityCheck(view, unselected)" in flashlight,
             "flashlight apply does not schedule the stability probe")
@@ -189,6 +279,8 @@ assert_true(
 
 print(
     "PASS: ranked flashlight causes map to distinct approved outcome tokens, "
-    "topology classes stay distinguishable, the stability probe is read-only and "
-    "gated, and the observer shares the collector's admission/dedup/privacy path"
+    "tokens serialize untruncated under the wire limit, documented names match "
+    "events.jsonl literals, topology classes stay distinguishable, the stability "
+    "probe is read-only and gated, and the observer shares the collector's "
+    "admission/dedup/privacy path"
 )
