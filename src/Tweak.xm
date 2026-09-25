@@ -11,6 +11,7 @@
 #import "CAMLDiagnostic.h"
 #import "CAMLReplacement.h"
 #import "PlampyCCState.h"
+#include <string.h>
 
 static NSString * const kPrefsDomain = @"com.misakaproject.plampyCC";
 static NSString * const kPrefsChanged = @"com.misakaproject.plampyCC.settingsChanged";
@@ -20,6 +21,7 @@ static NSHashTable *gOverlays, *gGlyphViews;
 static NSMutableDictionary<NSString *, id> *gIconImages;
 static void (*orig_layout)(id, SEL), (*orig_roundMove)(id, SEL);
 static void (*orig_overlayLoad)(id, SEL), (*orig_present)(id, SEL, BOOL, id), (*orig_dismiss)(id, SEL, BOOL, id);
+static void (*orig_headerGlyph)(id, SEL, id, double);
 
 static NSString *ThemeName(void) { return gTheme == 1 ? @"Pulsar" : @"Plampy"; }
 static NSArray<NSString *> *AssetRoots(void) {
@@ -255,6 +257,76 @@ static void roundMove(id self, SEL cmd) {
     ReconcileGlyphView(self);
 }
 
+// Flashlight header-glyph substitution for
+// -[CCUIFlashlightBackgroundViewController setHeaderGlyphImage:unscaledSymbolPointSize:].
+// The pushed stock image carries the flashlight state; only the pinned "on"
+// SF Symbol maps to the on state, and everything else (the "off" symbol or an
+// unclassifiable push) is the resting off state. The substituted image is the
+// existing cached themed decode (IconImage), never a fresh one, so the setter
+// converges on image identity exactly like the static glyph path.
+static UIImage *HeaderGlyphSubstitute(UIImage *image, double pointSize) {
+    if (!image) return nil;  // a nil push carries no state to theme: fail open
+    static NSString * const kFlashlightOnSymbol = @"flashlight.on.fill";
+    BOOL on = NO;
+    UIImage *plain = [UIImage systemImageNamed:kFlashlightOnSymbol];
+    if (image == plain) {
+        on = YES;
+    } else if (pointSize > 0) {
+        UIImageSymbolConfiguration *configuration = [UIImageSymbolConfiguration configurationWithPointSize:pointSize];
+        UIImage *sized = configuration ? [UIImage systemImageNamed:kFlashlightOnSymbol withConfiguration:configuration] : nil;
+        on = sized && image == sized;
+    }
+    if (!on) {
+        NSString *symbolName = Call(image, NSSelectorFromString(@"_symbolName"));
+        on = [symbolName isKindOfClass:NSString.class] && [symbolName isEqualToString:kFlashlightOnSymbol];
+    }
+    UIImage *themed = IconImage(on ? @"FlashlightOn" : @"FlashlightOff");
+    // Fail open on a nil, missing, or invalid themed image: the caller's own
+    // image is forwarded unchanged instead of a broken substitution.
+    return [themed isKindOfClass:UIImage.class] ? themed : nil;
+}
+static void headerGlyph(id self, SEL cmd, UIImage *image, double pointSize) {
+    UIImage *argument = image;
+    Class flashlightClass = NSClassFromString(@"CCUIFlashlightBackgroundViewController");
+    // Exact receiver class and existing functional state only: subclass
+    // instances, every other class, and a disabled tweak forward the caller's
+    // arguments unchanged.
+    if (gEnabled && flashlightClass && object_getClass(self) == flashlightClass) {
+        UIImage *themed = HeaderGlyphSubstitute(image, pointSize);
+        if (themed) argument = themed;
+    }
+    if (orig_headerGlyph) orig_headerGlyph(self, cmd, argument, pointSize);
+}
+// ABI-checked install: the hook is the verified object + 64-bit CGFloat form
+// of -setHeaderGlyphImage:unscaledSymbolPointSize: (v32@0:8@16d24, the same
+// verified seam as the header-glyph observer site in src/CAMLDiagnostic.xm).
+// Runtime encodings may quote class annotations; the shape is compared after
+// stripping them (the ABIShapeMatches policy) and any mismatch refuses the
+// hook, leaving the stock header glyph in place.
+static BOOL HeaderGlyphEncodingMatches(const char *runtimeEncoding) {
+    static const char kExpected[] = "v32@0:8@16d24";
+    if (!runtimeEncoding) return NO;
+    char normalized[96] = {};
+    size_t out = 0;
+    for (size_t i = 0; runtimeEncoding[i] != '\0' && out + 1 < sizeof(normalized); ++i) {
+        if (runtimeEncoding[i] == '@' && runtimeEncoding[i + 1] == '"') {
+            normalized[out++] = '@';
+            i += 2;
+            while (runtimeEncoding[i] != '\0' && runtimeEncoding[i] != '"') ++i;
+            continue;
+        }
+        normalized[out++] = runtimeEncoding[i];
+    }
+    normalized[out] = '\0';
+    return strcmp(normalized, kExpected) == 0;
+}
+static void InstallHeaderGlyphHook(Class cls) {
+    SEL sel = @selector(setHeaderGlyphImage:unscaledSymbolPointSize:);
+    Method method = cls ? class_getInstanceMethod(cls, sel) : NULL;
+    if (!method || !HeaderGlyphEncodingMatches(method_getTypeEncoding(method))) return;
+    MSHookMessageEx(cls, sel, (IMP)headerGlyph, (IMP *)&orig_headerGlyph);
+}
+
 static UIView *Background(id self) {
     UIView *view = Call(self, @selector(view));
     for (UIView *candidate in view.subviews)
@@ -344,4 +416,6 @@ __attribute__((constructor)) static void init_plampycc(void) {
     Install(overlay, @selector(viewDidLoad), (IMP)overlayLoad, (IMP *)&orig_overlayLoad);
     Install(overlay, @selector(presentAnimated:withCompletionHandler:), (IMP)present, (IMP *)&orig_present);
     Install(overlay, @selector(dismissAnimated:withCompletionHandler:), (IMP)dismiss, (IMP *)&orig_dismiss);
+    Class header = NSClassFromString(@"CCUIFlashlightBackgroundViewController");
+    InstallHeaderGlyphHook(header);
 }
