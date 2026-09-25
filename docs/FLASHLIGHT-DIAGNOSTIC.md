@@ -124,3 +124,69 @@ Run only under a separate device-authorized task:
 No result is claimed until a device-authorized collection supplies one of these
 records. The source/test change is therefore instrumentation, not a speculative
 functional hook.
+
+## Header-glyph runtime observer (`header-glyph`)
+
+Task: `t_61ba299e`. This section records the one additional bounded observer
+from the completed seam investigation, and the static evidence it rests on. It
+does not patch visual behavior: the original setter receives the unchanged
+image and point size, no replacement is constructed, and the recorder stays
+compile-time disabled outside collector builds.
+
+Static basis (21D50 inputs, read-only `strings` / `ipsw macho disass`; no
+device):
+
+- `FlashlightModule` carries the selector string
+  `setHeaderGlyphImage:unscaledSymbolPointSize:` (the module imports plain
+  `_objc_msgSend`, so the bare selector string is a selector reference), which
+  is the caller-side participation the static xref map left open.
+- `ControlCenterUIKit` implements
+  `-[CCUICustomContentModuleBackgroundViewController
+  setHeaderGlyphImage:unscaledSymbolPointSize:]`; its prologue keeps the point
+  size in `d0` (`fmov d8, d0`), so the compiled ABI shape is the object plus
+  64-bit `CGFloat` form `v32@0:8@16d24`. The site installer re-verifies that
+  shape against the runtime encoding (`ABIShapeMatches`) and refuses the hook
+  on any mismatch, recording the refusal like every other site.
+- `FlashlightModule` ships the two stock level symbols `flashlight.off.fill`
+  and `flashlight.on.fill` — the `systemImageNamed:withConfiguration:` inputs
+  of `_updateGlyphForFlashlightLevel:`. They are the comparison constants for
+  the stock-glyph classification below.
+
+Fields at this site (the serialized schema and every wire precision are
+unchanged; only the per-site meaning of three keys differs):
+
+- `s` is the selector token `header-glyph`;
+- `c` is the bounded receiver class
+  `CCUICustomContentModuleBackgroundViewController` (the `%.20s` class wire
+  precision shows its first 20 characters);
+- `a` is the bounded caller identity: the leaf image name of the one-frame
+  return address, allowlisted to `ControlCenterUIKit`, `FlashlightModule`,
+  `UIKitCore`, `PlampyCC`, `SpringBoard`, else `unknown-caller`. No raw
+  address is ever recorded;
+- `g` is the stock-glyph comparison token: `hdr-stock`, `hdr-other`,
+  `hdr-nil`, `hdr-unclass`;
+- `i` is `unscaledSymbolPointSize` in hundredths of a point;
+- `x` is the bounded image size token `w<width>h<height>` in whole points;
+- `n` reuses the bounded seen-table identity: 1 when this image pointer is new
+  for this receiver, 0 when the same image pointer repeats;
+- `d` is the bounded image class (`UIImage`, `_UIImageSymbolImage`, else
+  `unknown-class`);
+- `h` is `header`; `p`, `f`, `y`, and `o` stay empty or `none` at this site.
+
+Comparison rule for `g`, in order: a nil image is `hdr-nil`; an image
+identical to a freshly requested stock reference (`flashlight.off.fill` and
+`flashlight.on.fill`, default or point-size configuration) is `hdr-stock`; a locally extracted symbol
+name equal to a stock symbol is `hdr-stock`, and a different extracted symbol
+name is `hdr-other`; an image that carries no symbol configuration is
+`hdr-other` (the stock level glyphs are always SF Symbol images); anything the
+comparison cannot decide safely is `hdr-unclass`. The symbol name is compared
+locally and never recorded.
+
+Observation rule: expand the Flashlight module once with a collector build
+installed. A record with `a`=`FlashlightModule` proves expanded Flashlight uses
+the header-glyph seam at all; `g`=`hdr-stock` proves it writes its stock image
+through that seam. Zero `header-glyph` records, or zero records with a
+Flashlight caller, rules the route out and leaves the compact
+`CCUIButtonModuleView` `setGlyphImage:` write as the visible-layer seam. Any
+`hdr-unclass` record keeps the stock-image question open and must be read
+together with `a`, `i`, and `x`.

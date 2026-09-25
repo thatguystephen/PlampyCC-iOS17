@@ -12,7 +12,7 @@
 
 namespace caml_diag {
 
-enum class ValueKind { Package, State, Class };
+enum class ValueKind { Package, State, Class, Caller };
 
 static constexpr const char *kUnknownPackage = "unknown";
 static constexpr const char *kUnknownState = "unknown-state";
@@ -37,7 +37,13 @@ static constexpr const char *kApprovedStates[] = {
     "default", "disabled", "expanded", "highlighted", "collapsed", "off", "on", "selected",
     "glyph-appl", "glyph-sel-ap", "generic-app",
     "skip-disable", "skip-no-img", "skip-no-api", "skip-nil", "skip-id-nil", "skip-no-icon",
-    "stable-kept", "stable-repl", "stable-miss", "stable-gone"
+    "stable-kept", "stable-repl", "stable-miss", "stable-gone",
+    // Header-glyph stock-image comparison (docs/FLASHLIGHT-DIAGNOSTIC.md):
+    // one fixed token per comparison verdict, including an explicit
+    // cannot-decide verdict so a missing stock match is never over-read as a
+    // negative. Allowlist blocks hold string literals only: the contract
+    // tests parse every quoted value in them as a token.
+    "hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass"
 };
 namespace detail {
 inline constexpr size_t TokenLength(const char *token, size_t index = 0) {
@@ -80,7 +86,20 @@ static constexpr const char *kApprovedClasses[] = {
     "CCUIFlashlightModuleViewController", "CCUIFlashlightModule",
     "CCUIFlashlightBackgroundViewController", "CCUISteppedSliderView",
     "CCUIContentModuleContainerViewController", "CCUIModularControlCenterOverlayViewController",
-    "UIViewController", "UIView"
+    "UIViewController", "UIView",
+    // Header-glyph observer topology (docs/FLASHLIGHT-DIAGNOSTIC.md): the
+    // hook's receiver class and the bounded image classes the stock-glyph
+    // comparison discriminates.
+    "CCUICustomContentModuleBackgroundViewController", "UIImage", "_UIImageSymbolImage"
+};
+
+// Bounded caller identity for the header-glyph observer: the one-frame return
+// address captured at the setter boundary is reduced to the leaf image name
+// (extension stripped) and approved here. Everything else collapses to the
+// fallback token; a raw address never reaches a record.
+static constexpr const char *kUnknownCaller = "unknown-caller";
+static constexpr const char *kApprovedCallers[] = {
+    "ControlCenterUIKit", "FlashlightModule", "UIKitCore", "PlampyCC", "SpringBoard"
 };
 
 template <size_t N>
@@ -96,8 +115,27 @@ inline const char *ApprovedValue(std::string_view value, ValueKind kind) {
         case ValueKind::Package: return ApprovedValue(value, kApprovedPackages, kUnknownPackage);
         case ValueKind::State: return ApprovedValue(value, kApprovedStates, kUnknownState);
         case ValueKind::Class: return ApprovedValue(value, kApprovedClasses, kUnknownClass);
+        case ValueKind::Caller: return ApprovedValue(value, kApprovedCallers, kUnknownCaller);
     }
     return kUnknownClass;
+}
+
+// Leaf image name of a caller image path, extension stripped
+// (PlampyCC.dylib -> PlampyCC), then approved. Pure: the caller passes the
+// path text only.
+inline const char *CallerTokenForImage(const char *imagePath) {
+    if (!imagePath) return kUnknownCaller;
+    const char *leaf = imagePath;
+    for (const char *cursor = imagePath; *cursor; ++cursor) {
+        if (*cursor == '/') leaf = cursor + 1;
+    }
+    char leafName[64] = {};
+    size_t length = 0;
+    while (leaf[length] != '\0' && leaf[length] != '.' && length + 1 < sizeof(leafName)) {
+        leafName[length] = leaf[length];
+        ++length;
+    }
+    return ApprovedValue(std::string_view(leafName, length), kApprovedCallers, kUnknownCaller);
 }
 
 inline bool CopyApproved(char *destination, size_t capacity, std::string_view value,
@@ -337,6 +375,7 @@ inline const char *ConstructionPathForSite(const char *site) {
     if (strcmp(site, "button-state") == 0 || strcmp(site, "slider-state") == 0) return "state";
     if (strcmp(site, "factory") == 0) return "factory";
     if (strcmp(site, "controller") == 0) return "controller";
+    if (strcmp(site, "header-glyph") == 0) return "header";
     return "unknown";
 }
 

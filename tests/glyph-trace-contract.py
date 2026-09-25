@@ -277,6 +277,63 @@ assert_true(
     "glyph trace regression is not wired into the build gate",
 )
 
+# Header-glyph observer contract (docs/FLASHLIGHT-DIAGNOSTIC.md): the single
+# bounded observer for -[CCUICustomContentModuleBackgroundViewController
+# setHeaderGlyphImage:unscaledSymbolPointSize:] must stay observer-only, keep
+# the verified ABI shape, and record only approved tokens.
+HOOKS = (ROOT / "src/CAMLDiagnosticHooks.mm").read_text()
+assert_true("kDiagnosticSiteCount = 8" in DIAG,
+            "the header-glyph site is missing from the site count")
+for literal in ('"CCUICustomContentModuleBackgroundViewController"',
+                '"setHeaderGlyphImage:unscaledSymbolPointSize:"',
+                '"v32@0:8@16d24"', '"header-glyph"'):
+    assert_true(literal in DIAG, f"header-glyph site descriptor missing: {literal}")
+assert_true('sites[7] = { "CCUICustomContentModuleBackgroundViewController"' in DIAG,
+            "the header-glyph site is not the eighth bounded diagnostic site")
+hook_body = function_body(HOOKS, "CAMLHeaderGlyphHook")
+assert_true(
+    'ObserveHeaderGlyph(self, image, pointSize, __builtin_return_address(0), "header-glyph")'
+    in hook_body,
+    "the header-glyph hook does not record the bounded one-frame caller identity",
+)
+assert_true(
+    hook_body.index("ObserveHeaderGlyph(") < hook_body.index("gOriginalHeaderGlyph"),
+    "the header-glyph hook must observe before it forwards the original call",
+)
+assert_true("(self, cmd, image, pointSize)" in hook_body,
+            "the header-glyph hook must forward the unchanged image and point size")
+assert_true("CAMLCreateReplacementDescription" not in hook_body
+            and "CAMLRecordPackageInstall" not in hook_body,
+            "the header-glyph hook must stay observer-only")
+assert_true("__builtin_return_address(0)" in HOOKS
+            and "%p" not in DIAG,
+            "caller identity must be reduced to an approved token, never a raw address")
+header_states = {"hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass"}
+assert_true(header_states <= set(states),
+            f"header-glyph comparison tokens missing from kApprovedStates: "
+            f"{sorted(header_states - set(states))}")
+for token in sorted(header_states | {"header-glyph"}):
+    assert_true(f"`{token}`" in DOC,
+                f"wire value missing from {DOC_PATH}: {token}")
+for symbol in ("flashlight.off.fill", "flashlight.on.fill"):
+    assert_true(symbol in DIAG and symbol in DOC,
+                f"stock flashlight symbol {symbol} is not pinned in the classifier and the doc")
+callers = allowlist("kApprovedCallers")
+assert_true({"FlashlightModule", "ControlCenterUIKit"} <= set(callers),
+            "bounded caller allowlist is missing the decisive image names")
+assert_true("CallerTokenForImage" in CORE and "kUnknownCaller" in CORE,
+            "bounded caller identity has no centralized policy")
+assert_true('strcmp(site, "header-glyph") == 0) return "header"' in CORE,
+            "the header-glyph construction path is not mapped in the policy header")
+assert_true("ValueKind::Caller" in DIAG,
+            "caller tokens bypass the approved-value gate")
+for required in ("CCUICustomContentModuleBackgroundViewController", "UIImage",
+                 "_UIImageSymbolImage"):
+    assert_true(required in classes,
+                f"class {required} missing from kApprovedClasses")
+assert_true(len("header-glyph") <= site_wire,
+            "the header-glyph site label exceeds the site wire limit")
+
 print(
     "PASS: ranked flashlight causes map to distinct approved outcome tokens, "
     "tokens serialize untruncated under the wire limit, documented names match "

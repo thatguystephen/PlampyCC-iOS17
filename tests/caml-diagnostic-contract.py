@@ -233,7 +233,7 @@ assert_true("__unsafe_unretained id" in SOURCE and "CAMLPackageContext" in SOURC
 # Descriptor installation stays POD and deterministic, while replacements are
 # supplied by the new shim rather than dynamically initialized hook storage.
 rows = re.findall(r'sites\[(\d+)\]\s*=\s*\{\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*\(IMP\)(\w+),\s*&\w+,\s*(true|false)', SOURCE)
-assert_true(len(rows) == 7, "deterministic seven-site descriptor table is incomplete")
+assert_true(len(rows) == 8, "deterministic eight-site descriptor table is incomplete")
 assert_true("gSites" not in SOURCE and "gDiagnosticInstalledMask" not in SOURCE, "legacy dynamic descriptor state remains")
 assert_true("RecordInstallStatus(&sites[index], succeeded)" in SOURCE, "installation truth is not recorded from the actual result")
 assert_true("MSHookMessageEx" in function_body(SOURCE, "InstallSite"), "runtime installer does not use the declared hook boundary")

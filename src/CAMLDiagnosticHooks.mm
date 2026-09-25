@@ -1,4 +1,4 @@
-// Replacement IMP shim for the seven CAML diagnostic sites.
+// Replacement IMP shim for the CAML diagnostic sites.
 //
 // Compiled with ARC disabled (see the Makefile): this file owns the ABI edge —
 // borrowed hook arguments, original-IMP invocation, and exactly-one release of
@@ -10,7 +10,8 @@
 // invoke the original IMP exactly once with that single argument (retain-first
 // setter storage, never an unretained arg); record the owned/applied recovery
 // state; release the +1 replacement exactly once; never release the incoming
-// description.
+// description. Observer-only seams skip construction and pass the original
+// arguments through unchanged.
 
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
@@ -23,7 +24,7 @@
 #endif
 
 // Original-IMP slots written by the diagnostic installer (the descriptor table
-// in src/CAMLDiagnostic.xm passes &gOriginal*). C linkage matches that
+// in src/CAMLDiagnostic.xm passes &gOriginal*). C linkage matches this
 // translation unit's `extern "C"` declarations; these ARE the definitions.
 extern "C" {
 IMP gOriginalButtonPackage = NULL;
@@ -33,11 +34,14 @@ IMP gOriginalFactory = NULL;
 IMP gOriginalButtonState = NULL;
 IMP gOriginalSliderState = NULL;
 IMP gOriginalLowPowerDescription = NULL;
+IMP gOriginalHeaderGlyph = NULL;
 }
 
 extern "C" void ObservePackage(__unsafe_unretained id view, __unsafe_unretained id description, const char *site);
 extern "C" void ObserveState(__unsafe_unretained id view, __unsafe_unretained id state, const char *site);
 extern "C" void ObserveFactory(__unsafe_unretained id packageName);
+extern "C" void ObserveHeaderGlyph(__unsafe_unretained id receiver, __unsafe_unretained id image,
+                                   double pointSize, const void *callerAddress, const char *site);
 
 // MRR release of the construction boundary's +1 result. The message-send
 // release form is the source form guaranteed valid in a non-ARC
@@ -84,7 +88,7 @@ extern "C" __attribute__((noinline, used)) void CAMLRoundPackageHook(__unsafe_un
 }
 
 extern "C" __attribute__((noinline, used)) void CAMLSliderPackageHook(__unsafe_unretained id self, SEL cmd,
-                                                            __unsafe_unretained id description) {
+                                                           __unsafe_unretained id description) {
     if (CAMLDiagnosticPrimitiveAdmission(false)) ObservePackage(self, description, "slider-package");
     __unsafe_unretained id replacement = CAMLCreateReplacementDescription(self, description, true);
     __unsafe_unretained id argument = replacement ? replacement : description;
@@ -122,4 +126,21 @@ extern "C" __attribute__((noinline, used)) id CAMLLowPowerDescriptionHook(__unsa
         : nil;
     if (shouldObserve) ObservePackage(self, description, "controller");
     return description;
+}
+
+// Observer-only header-glyph seam (docs/FLASHLIGHT-DIAGNOSTIC.md). The
+// incoming image and unscaled point size are forwarded to the original setter
+// unchanged — this seam patches no visual behavior. The one-frame return
+// address captured at this boundary is the bounded caller identity: it is
+// reduced to an approved image token inside the observer and never recorded
+// raw. The ABI shape is the verified object + 64-bit CGFloat form of
+// -setHeaderGlyphImage:unscaledSymbolPointSize:; the installer re-verifies it
+// against the runtime encoding and refuses the hook on any mismatch.
+extern "C" __attribute__((noinline, used)) void CAMLHeaderGlyphHook(__unsafe_unretained id self, SEL cmd,
+                                                                   __unsafe_unretained id image,
+                                                                   double pointSize) {
+    if (CAMLDiagnosticPrimitiveAdmission(false))
+        ObserveHeaderGlyph(self, image, pointSize, __builtin_return_address(0), "header-glyph");
+    if (gOriginalHeaderGlyph)
+        ((void(*)(__unsafe_unretained id, SEL, __unsafe_unretained id, double))gOriginalHeaderGlyph)(self, cmd, image, pointSize);
 }

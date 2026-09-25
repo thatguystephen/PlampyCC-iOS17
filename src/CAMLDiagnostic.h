@@ -31,6 +31,18 @@ void ObserveFactory(CAML_DIAGNOSTIC_BORROWED id packageName);
 // entry, bail, and post-apply overwrite causes. Pure observer.
 void ObserveGlyph(CAML_DIAGNOSTIC_BORROWED id view, const char *outcome,
                   const char *site);
+// Header-glyph runtime observer (docs/FLASHLIGHT-DIAGNOSTIC.md): records one
+// bounded event per -[CCUICustomContentModuleBackgroundViewController
+// setHeaderGlyphImage:unscaledSymbolPointSize:] call — receiver class, bounded
+// caller identity (the one-frame return address is reduced to an approved
+// image token before it leaves the hook boundary), bounded image identity and
+// size, the point size, and the stock-glyph comparison token. Pure observer:
+// the original setter receives the unchanged image and point size afterwards.
+void ObserveHeaderGlyph(CAML_DIAGNOSTIC_BORROWED id receiver,
+                        CAML_DIAGNOSTIC_BORROWED id image,
+                        double pointSize,
+                        const void *callerAddress,
+                        const char *site);
 #undef CAML_DIAGNOSTIC_BORROWED
 #endif
 

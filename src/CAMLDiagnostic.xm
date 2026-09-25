@@ -49,7 +49,7 @@ static const char kDiagnosticEventFile[] = "events.jsonl";
 static const char kDiagnosticTempFile[] = "events.jsonl.tmp";
 
 extern caml_diag::SyscallAdapter gDarwinSyscalls;
-static constexpr size_t kDiagnosticSiteCount = 7;
+static constexpr size_t kDiagnosticSiteCount = 8;
 static constexpr size_t kRingCapacity = caml_diag::RingPolicy::kCapacity;
 static constexpr size_t kSerializedEventCapacity = caml_diag::RingPolicy::kSerializedEventCapacity;
 static constexpr size_t kDiagnosticRetentionBytes = 1024 * 1024;
@@ -117,6 +117,7 @@ extern "C" IMP gOriginalFactory;
 extern "C" IMP gOriginalButtonState;
 extern "C" IMP gOriginalSliderState;
 extern "C" IMP gOriginalLowPowerDescription;
+extern "C" IMP gOriginalHeaderGlyph;
 extern "C" void CAMLButtonPackageHook(id, SEL, id);
 extern "C" void CAMLRoundPackageHook(id, SEL, id);
 extern "C" void CAMLSliderPackageHook(id, SEL, id);
@@ -124,6 +125,7 @@ extern "C" id CAMLFactoryHook(id, SEL, id, id);
 extern "C" void CAMLButtonStateHook(id, SEL, id);
 extern "C" void CAMLSliderStateHook(id, SEL, id);
 extern "C" id CAMLLowPowerDescriptionHook(id, SEL);
+extern "C" void CAMLHeaderGlyphHook(id, SEL, id, double);
 
 static uint64_t DiagnosticMonotonicMilliseconds(void) {
     static mach_timebase_info_data_t timebase = {};
@@ -628,9 +630,16 @@ static bool SerializeEvent(CAMLDiagnosticEvent *event) {
     return written > 0 && gRingPolicy.SerializedSizeFits((size_t)written);
 }
 
+// The optional overrides serve the header-glyph observer only: the bounded
+// caller token replaces the ancestor class, the image-size token rides the
+// otherwise empty path-prefix key, and the point size rides the view-tag key.
+// Every wire precision and the serialized schema are unchanged.
 static void RecordEventBody(const char *site, id view, id description, id state,
                             NSString *packageNameOverride, bool installationRecord,
-                            bool installationSucceeded, const char *stateOverride = nullptr) {
+                            bool installationSucceeded, const char *stateOverride = nullptr,
+                            const char *ancestorOverride = nullptr,
+                            const char *pathPrefixOverride = nullptr,
+                            int32_t viewTagOverride = 0, bool hasViewTagOverride = false) {
     CAMLDiagnosticEvent event = {};
     event.monotonicMs = DiagnosticMonotonicMilliseconds();
     event.wallSeconds = (uint64_t)NSDate.date.timeIntervalSince1970;
@@ -639,6 +648,12 @@ static void RecordEventBody(const char *site, id view, id description, id state,
                        sizeof(event.pathPrefix), event.descriptionClass, sizeof(event.descriptionClass));
     if (!installationRecord) {
         CopyRouteDetails(site, view, description, &event);
+    }
+    if (pathPrefixOverride) {
+        // Header-glyph site: the bounded image-size token rides the empty
+        // path-prefix key; no filesystem path is ever derived from event
+        // fields (the output path is fixed by DiagnosticOutputDirectory).
+        CopyFixedCString(event.pathPrefix, sizeof(event.pathPrefix), pathPrefixOverride);
     }
     if ([packageNameOverride isKindOfClass:[NSString class]])
         CopyApproved(event.packageName, sizeof(event.packageName), packageNameOverride,
@@ -653,8 +668,18 @@ static void RecordEventBody(const char *site, id view, id description, id state,
     } else {
         CopyStateDetails(state, event.state, sizeof(event.state));
     }
-    CopyAncestorClass(view, event.ancestorClass, sizeof(event.ancestorClass));
+    if (ancestorOverride) {
+        // Bounded caller identity for the header-glyph site: an approved image
+        // token standing in for the one-frame return address captured at the
+        // setter boundary. The raw address never reaches a record.
+        (void)caml_diag::CopyApproved(event.ancestorClass, sizeof(event.ancestorClass),
+                                      std::string_view(ancestorOverride),
+                                      caml_diag::ValueKind::Caller);
+    } else {
+        CopyAncestorClass(view, event.ancestorClass, sizeof(event.ancestorClass));
+    }
     event.viewTag = ViewTag(view);
+    if (hasViewTagOverride) event.viewTag = viewTagOverride;
     event.installationRecord = installationRecord;
     event.installationSucceeded = installationSucceeded;
     os_unfair_lock_lock(&gDiagnosticLock);
@@ -756,6 +781,108 @@ extern "C" __attribute__((noinline, used)) void ObserveGlyph(__unsafe_unretained
     RunObserver(false, ObserveGlyphBody, &context);
 }
 
+// Header-glyph observer (docs/FLASHLIGHT-DIAGNOSTIC.md). The two literals are
+// the verified 21D50 Flashlight stock symbols (FlashlightModule strings):
+// _updateGlyphForFlashlightLevel: builds the stock level images with
+// systemImageNamed:withConfiguration: from these names. They are comparison
+// constants only — no symbol name, image data, or image description is ever
+// recorded.
+static NSString *const kFlashlightStockSymbols[] = { @"flashlight.off.fill", @"flashlight.on.fill" };
+static constexpr size_t kFlashlightStockSymbolCount =
+    sizeof(kFlashlightStockSymbols) / sizeof(kFlashlightStockSymbols[0]);
+
+static NSString *DiagnosticSymbolName(UIImage *image) {
+    SEL selector = NSSelectorFromString(@"_symbolName");
+    if (!image || ![image respondsToSelector:selector]) return nil;
+    @try {
+        id name = ((id(*)(id, SEL))objc_msgSend)(image, selector);
+        return [name isKindOfClass:[NSString class]] ? name : nil;
+    } @catch (...) {
+        return nil;
+    }
+}
+
+static void CopyImageSizeToken(UIImage *image, char *destination, size_t capacity) {
+    if (capacity == 0) return;
+    destination[0] = '\0';
+    if (!image) return;
+    CGSize size = image.size;
+    long width = size.width > 0 ? (long)(size.width + 0.5) : 0;
+    long height = size.height > 0 ? (long)(size.height + 0.5) : 0;
+    if (width > 999) width = 999;
+    if (height > 999) height = 999;
+    snprintf(destination, capacity, "w%ldh%ld", width, height);
+}
+
+static const char *ClassifyHeaderGlyphImage(UIImage *image, double pointSize) {
+    if (!image) return "hdr-nil";
+    UIImageSymbolConfiguration *configuration = nil;
+    if (pointSize > 0) {
+        @try {
+            configuration = [UIImageSymbolConfiguration configurationWithPointSize:pointSize];
+        } @catch (...) {
+            configuration = nil;
+        }
+    }
+    for (size_t index = 0; index < kFlashlightStockSymbolCount; ++index) {
+        NSString *name = kFlashlightStockSymbols[index];
+        UIImage *plain = [UIImage systemImageNamed:name];
+        UIImage *sized = configuration ? [UIImage systemImageNamed:name withConfiguration:configuration] : nil;
+        if (image == plain || (sized && image == sized)) return "hdr-stock";
+    }
+    NSString *symbolName = DiagnosticSymbolName(image);
+    if (symbolName.length) {
+        for (size_t index = 0; index < kFlashlightStockSymbolCount; ++index)
+            if ([symbolName isEqualToString:kFlashlightStockSymbols[index]]) return "hdr-stock";
+        return "hdr-other";
+    }
+    // No symbol name is extractable: the symbol-ness discriminator is used
+    // only where safely available. The stock level glyphs are always SF
+    // Symbol images, so an image carrying no symbol configuration cannot be
+    // one of them; anything else stays explicitly unclassified.
+    SEL configurationSelector = NSSelectorFromString(@"symbolConfiguration");
+    if ([image respondsToSelector:configurationSelector]) {
+        id symbolConfiguration = ((id(*)(id, SEL))objc_msgSend)(image, configurationSelector);
+        if (!symbolConfiguration) return "hdr-other";
+    }
+    return "hdr-unclass";
+}
+
+struct CAMLHeaderGlyphContext {
+    __unsafe_unretained id receiver;
+    __unsafe_unretained id image;
+    double pointSize;
+    const void *callerAddress;
+    const char *site;
+};
+static void ObserveHeaderGlyphBody(void *rawContext) {
+    CAMLHeaderGlyphContext *context = (CAMLHeaderGlyphContext *)rawContext;
+    char sizeToken[16] = {};
+    CopyImageSizeToken(context->image, sizeToken, sizeof(sizeToken));
+    const char *classification = ClassifyHeaderGlyphImage(context->image, context->pointSize);
+    const char *callerToken = caml_diag::kUnknownCaller;
+    Dl_info callerImage = {};
+    if (context->callerAddress && dladdr(context->callerAddress, &callerImage) != 0 &&
+        callerImage.dli_fname) {
+        callerToken = caml_diag::CallerTokenForImage(callerImage.dli_fname);
+    }
+    int32_t pointSizeHundredths = 0;
+    if (context->pointSize > 0) {
+        double hundredths = context->pointSize * 100.0;
+        pointSizeHundredths = hundredths > 2000000000.0 ? 2000000000 : (int32_t)hundredths;
+    }
+    RecordEventBody(context->site, context->receiver, context->image, nil, nil, false, false,
+                    classification, callerToken, sizeToken, pointSizeHundredths, true);
+}
+extern "C" __attribute__((noinline, used)) void ObserveHeaderGlyph(__unsafe_unretained id receiver,
+                                                                  __unsafe_unretained id image,
+                                                                  double pointSize,
+                                                                  const void *callerAddress,
+                                                                  const char *site) {
+    CAMLHeaderGlyphContext context = { receiver, image, pointSize, callerAddress, site };
+    RunObserver(false, ObserveHeaderGlyphBody, &context);
+}
+
 struct CAMLInstallContext { const char *site; bool succeeded; };
 static void RecordInstallStatusBody(void *rawContext) {
     CAMLInstallContext *context = (CAMLInstallContext *)rawContext;
@@ -806,6 +933,15 @@ extern "C" __attribute__((noinline, used)) size_t BuildCAMLDiagnosticSites(CAMLD
     // Verified 21D50 module seam. Getter observation is deliberately read-only:
     // it returns the exact stock result and never calls the replacement factory.
     sites[6] = { "CCUILowPowerModuleViewController", "glyphPackageDescription", "@16@0:8", "controller", (IMP)CAMLLowPowerDescriptionHook, &gOriginalLowPowerDescription, false };
+    // Verified 21D50 header-glyph seam (docs/FLASHLIGHT-DIAGNOSTIC.md).
+    // Observer-only: the original setter receives the unchanged image and
+    // point size. The ABI shape is the compiled object + 64-bit CGFloat form
+    // of -setHeaderGlyphImage:unscaledSymbolPointSize:; the runtime encoding
+    // is re-verified before the hook installs and a mismatch refuses it.
+    sites[7] = { "CCUICustomContentModuleBackgroundViewController",
+                 "setHeaderGlyphImage:unscaledSymbolPointSize:",
+                 "v32@0:8@16d24", "header-glyph",
+                 (IMP)CAMLHeaderGlyphHook, &gOriginalHeaderGlyph, false };
     return kDiagnosticSiteCount;
 }
 
