@@ -17,6 +17,7 @@ static NSString * const kPrefsChanged = @"com.misakaproject.plampyCC.settingsCha
 static BOOL gEnabled, gWallpaper, gBlur;
 static NSInteger gTheme;
 static NSHashTable *gOverlays, *gGlyphViews;
+static NSMutableDictionary<NSString *, id> *gIconImages;
 static void (*orig_layout)(id, SEL), (*orig_roundMove)(id, SEL);
 static void (*orig_overlayLoad)(id, SEL), (*orig_present)(id, SEL, BOOL, id), (*orig_dismiss)(id, SEL, BOOL, id);
 
@@ -47,6 +48,10 @@ static NSString *IconForIdentifier(NSString *identifier) {
     return icons[identifier];
 }
 static UIImage *IconImage(NSString *name) {
+    if (!gIconImages) gIconImages = [NSMutableDictionary dictionary];
+    NSString *cacheKey = [NSString stringWithFormat:@"%ld:%@", (long)gTheme, name];
+    id cached = gIconImages[cacheKey];
+    if (cached) return cached == NSNull.null ? nil : cached;
     NSString *relative = [@"Icon" stringByAppendingPathComponent:
                           [name stringByAppendingString:@".png"]];
     NSString *path = ThemeFile(relative);
@@ -60,7 +65,9 @@ static UIImage *IconImage(NSString *name) {
             }
         }
     }
-    return path ? [UIImage imageWithContentsOfFile:path] : nil;
+    UIImage *image = path ? [UIImage imageWithContentsOfFile:path] : nil;
+    gIconImages[cacheKey] = image ?: (id)NSNull.null;
+    return image;
 }
 static UIImage *GlyphImage(id view) { return Call(view, @selector(glyphImage)); }
 static UIImage *SelectedGlyphImage(id view) { return Call(view, @selector(selectedGlyphImage)); }
@@ -252,6 +259,7 @@ static void ReloadPrefs(CFNotificationCenterRef center, void *observer, CFString
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:kPrefsDomain];
     gEnabled = [d boolForKey:@"kEnabled"]; gWallpaper = [d boolForKey:@"kWallpaperSwitch"]; gBlur = [d boolForKey:@"kBlurEffectSwitch"]; gTheme = [d integerForKey:@"kThemeType"];
     dispatch_async(dispatch_get_main_queue(), ^{
+        [gIconImages removeAllObjects];
         for (id view in gGlyphViews) ReconcileGlyphView(view);
         for (id overlay in gOverlays) ReconcileWallpaper(overlay);
         CAMLReconcilePackageConsumers();

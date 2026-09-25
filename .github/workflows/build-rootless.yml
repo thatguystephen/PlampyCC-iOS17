@@ -59,6 +59,7 @@ jobs:
       - name: Build and emit verifier contract
         run: |
           set -euo pipefail
+          python3 -B tests/icon-cache-contract.py
           python3 -B tests/caml-diagnostic-contract.py
           bun tests/static-check.ts
           python3 -B tests/signature-contract.py
