@@ -615,7 +615,7 @@ static bool SerializeEvent(CAMLDiagnosticEvent *event) {
 
 static void RecordEventBody(const char *site, id view, id description, id state,
                             NSString *packageNameOverride, bool installationRecord,
-                            bool installationSucceeded) {
+                            bool installationSucceeded, const char *stateOverride = nullptr) {
     CAMLDiagnosticEvent event = {};
     event.monotonicMs = DiagnosticMonotonicMilliseconds();
     event.wallSeconds = (uint64_t)NSDate.date.timeIntervalSince1970;
@@ -628,7 +628,16 @@ static void RecordEventBody(const char *site, id view, id description, id state,
     if ([packageNameOverride isKindOfClass:[NSString class]])
         CopyApproved(event.packageName, sizeof(event.packageName), packageNameOverride,
                      caml_diag::ValueKind::Package);
-    CopyStateDetails(state, event.state, sizeof(event.state));
+    if (stateOverride) {
+        // C-string outcome tokens pass the same approved-value gate as
+        // Objective-C states; anything outside kApprovedStates collapses to
+        // the fallback before it can reach a serialized record.
+        (void)caml_diag::CopyApproved(event.state, sizeof(event.state),
+                                      std::string_view(stateOverride),
+                                      caml_diag::ValueKind::State);
+    } else {
+        CopyStateDetails(state, event.state, sizeof(event.state));
+    }
     CopyAncestorClass(view, event.ancestorClass, sizeof(event.ancestorClass));
     event.viewTag = ViewTag(view);
     event.installationRecord = installationRecord;
@@ -717,6 +726,19 @@ static void ObserveFactoryBody(void *rawContext) {
 extern "C" __attribute__((noinline, used)) void ObserveFactory(__unsafe_unretained id packageName) {
     CAMLFactoryContext context = { packageName };
     RunObserver(true, ObserveFactoryBody, &context);
+}
+
+struct CAMLGlyphContext { __unsafe_unretained id view; const char *outcome; const char *site; };
+static void ObserveGlyphBody(void *rawContext) {
+    CAMLGlyphContext *context = (CAMLGlyphContext *)rawContext;
+    RecordEventBody(context->site, context->view, nil, nil, nil, false, false,
+                    context->outcome);
+}
+extern "C" __attribute__((noinline, used)) void ObserveGlyph(__unsafe_unretained id view,
+                                                             const char *outcome,
+                                                             const char *site) {
+    CAMLGlyphContext context = { view, outcome, site };
+    RunObserver(false, ObserveGlyphBody, &context);
 }
 
 struct CAMLInstallContext { const char *site; bool succeeded; };

@@ -22,14 +22,27 @@ static constexpr const char *kApprovedPackages[] = {
     "AirplaneMode", "Bluetooth", "Calculator", "Camera", "Flashlight",
     "Focus", "LowPower", "MusicRecognition", "Timer", "WiFi"
 };
+// Glyph-trace outcomes (see evidence/flashlight-compact-glyph-21D50.md): one
+// fixed token per reconciler decision, so a flushed record discriminates the
+// ranked flashlight causes without any free-form text.
 static constexpr const char *kApprovedStates[] = {
-    "default", "disabled", "expanded", "highlighted", "collapsed", "off", "on", "selected"
+    "default", "disabled", "expanded", "highlighted", "collapsed", "off", "on", "selected",
+    "glyph-applied", "glyph-selected-applied", "generic-applied",
+    "skip-disabled", "skip-no-image", "skip-no-api", "skip-nil-glyph", "skip-no-icon",
+    "stability-kept", "stability-replaced", "stability-missing", "stability-deallocated"
 };
+// Flashlight compact-button topology candidates (21D50): the host class and
+// the _viewControllerForAncestor result must both stay distinguishable from
+// "unknown-class" for the trace to answer the ownership question.
 static constexpr const char *kApprovedClasses[] = {
     "CCUIButtonModuleView", "CCUIButtonModuleViewController", "CCUIRoundButton",
     "CCUILabeledRoundButton", "CCUILabeledRoundButtonController", "CCUIBaseSliderView",
     "CCUICAPackageDescription", "CCUICAPackageView", "CCUIToggleModule", "CCUIAppearanceModule",
-    "CCUIMuteModule", "CCUIOrientationLockModule", "CCUILowPowerModuleViewController"
+    "CCUIMuteModule", "CCUIOrientationLockModule", "CCUILowPowerModuleViewController",
+    "CCUIFlashlightModuleViewController", "CCUIFlashlightModule",
+    "CCUIFlashlightBackgroundViewController", "CCUISteppedSliderView",
+    "CCUIContentModuleContainerViewController", "CCUIModularControlCenterOverlayViewController",
+    "UIViewController", "UIView"
 };
 
 template <size_t N>

@@ -25,6 +25,12 @@ void ObserveState(CAML_DIAGNOSTIC_BORROWED id view,
                   CAML_DIAGNOSTIC_BORROWED id state,
                   const char *site);
 void ObserveFactory(CAML_DIAGNOSTIC_BORROWED id packageName);
+// Static-glyph reconcile trace (Flashlight/compact-button diagnosis): records
+// one approved outcome token per reconciler decision, plus the host and
+// ancestor class names, so a flushed record separates hook admission, branch
+// entry, bail, and post-apply overwrite causes. Pure observer.
+void ObserveGlyph(CAML_DIAGNOSTIC_BORROWED id view, const char *outcome,
+                  const char *site);
 #undef CAML_DIAGNOSTIC_BORROWED
 #endif
 
