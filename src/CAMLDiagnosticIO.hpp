@@ -37,20 +37,46 @@ inline bool AdapterReady(const SyscallAdapter &adapter) {
            adapter.write && adapter.sync && adapter.renameAt && adapter.unlinkAt && adapter.close;
 }
 
+// Owned-suffix component policy (tweak-owned zone). Every owned-suffix
+// component must be owned by the effective user; the leaf must be exactly
+// 0700 and intermediates must never be group/world writable. This rule is
+// deliberately strict and is never weakened for platform directories: those
+// are validated by ValidatePlatformPrefixDescriptor above the boundary.
 inline bool ValidateDirectoryDescriptor(SyscallAdapter &adapter, int descriptor,
                                         bool leaf, uid_t effectiveUser) {
     struct stat status = {};
     if (!adapter.stat || adapter.stat(adapter.context, descriptor, &status) != 0 ||
         !S_ISDIR(status.st_mode)) return false;
-    if (leaf && status.st_uid != effectiveUser) return false;
+    if (status.st_uid != effectiveUser) return false;
     if (leaf) return (status.st_mode & 0777) == 0700;
     return (status.st_mode & 0022) == 0;
 }
 
-// The rootless platform prefix is trusted and opened once with normal symlink
-// resolution. Every tweak-owned suffix component is then opened relative to
-// that descriptor with O_NOFOLLOW, created as 0700 only when absent, and
-// validated before it becomes the next walk anchor.
+// Platform-prefix policy (trusted zone). The trusted prefix is the
+// platform-owned parent of the tweak-owned suffix; it is resolved once from
+// an allowlisted literal with normal symlink resolution (platform-provided
+// indirectness above the boundary is accepted by design). Real device chains
+// are mobile:mobile 0755 or 0775 -- Apple ships group-writable mobile data
+// parents -- so the mobile-owned form may be group-writable but is never
+// world-writable; a root-owned prefix must have no group/world write; any
+// other owner is rejected. Below the boundary every component is
+// descriptor-confined with O_NOFOLLOW and validated before it becomes the
+// next walk anchor, so a planted symlink or rename race cannot escape.
+inline bool ValidatePlatformPrefixDescriptor(SyscallAdapter &adapter, int descriptor,
+                                             uid_t effectiveUser) {
+    struct stat status = {};
+    if (!adapter.stat || adapter.stat(adapter.context, descriptor, &status) != 0 ||
+        !S_ISDIR(status.st_mode)) return false;
+    if (status.st_uid == effectiveUser) return (status.st_mode & 0002) == 0;
+    if (status.st_uid == 0) return (status.st_mode & 0022) == 0;
+    return false;
+}
+
+// The trusted platform prefix is opened once with normal symlink resolution
+// and validated under the platform policy above. Every tweak-owned suffix
+// component is then opened relative to that descriptor with O_NOFOLLOW,
+// created as 0700 only when absent, and validated before it becomes the next
+// walk anchor.
 inline bool OpenDirectoryUnderTrustedPrefix(SyscallAdapter &adapter,
                                              const char *trustedPrefix,
                                              const char *ownedSuffix,
@@ -71,7 +97,7 @@ inline bool OpenDirectoryUnderTrustedPrefix(SyscallAdapter &adapter,
     int current = adapter.openAt(adapter.context, AT_FDCWD, trustedPrefix,
                                  O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
     if (current < 0) return false;
-    if (!ValidateDirectoryDescriptor(adapter, current, false, effectiveUser)) {
+    if (!ValidatePlatformPrefixDescriptor(adapter, current, effectiveUser)) {
         adapter.close(adapter.context, current);
         return false;
     }

@@ -254,6 +254,14 @@ assert_true("ValidateDirectoryDescriptor(adapter, next, leaf, effectiveUser)" in
             and "status.st_uid != effectiveUser" in IO
             and "(status.st_mode & 0777) == 0700" in IO,
             "tweak-owned suffix no longer enforces descriptor uid/mode validation")
+assert_true("ValidatePlatformPrefixDescriptor(adapter, current, effectiveUser)" in directory_walk,
+            "trusted prefix is not validated under the stated platform prefix policy")
+platform_policy = function_body(IO, "ValidatePlatformPrefixDescriptor")
+assert_true("status.st_uid == effectiveUser" in platform_policy
+            and "(status.st_mode & 0002) == 0" in platform_policy
+            and "status.st_uid == 0" in platform_policy
+            and "(status.st_mode & 0022) == 0" in platform_policy,
+            "platform prefix policy must admit the observed mobile 0755/0775 chains and reject world-writable or foreign-owned prefixes")
 production_walk = function_body(SOURCE, "OpenDiagnosticDirectory")
 assert_true("caml_diag::OpenDirectoryUnderTrustedPrefix" in production_walk
             and "DiagnosticTrustedPrefix()" in production_walk
@@ -276,8 +284,12 @@ assert_true('ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAM
             "diagnostic output must stay under the mobile-writable root")
 assert_true('ROOT_PATH_NS(@"/Library/Application Support/PlampyCC/CAML-Diagnostic")' not in output_directory,
             "diagnostic output must not use the root-owned system asset root")
+assert_true("return @\"/" not in output_directory and "/var/jb" not in output_directory,
+            "diagnostic output must route through the rootless macro, never an unwrapped literal or hardcoded jailbreak root")
+assert_true(re.search(r'kDiagnosticOwnedSuffix\s*=\s*"PlampyCC/CAML-Diagnostic"', SOURCE) is not None,
+            "owned suffix must be exactly the tweak-owned PlampyCC/CAML-Diagnostic chain")
 trusted_prefix = function_body(SOURCE, "DiagnosticTrustedPrefix")
-assert_true('ROOT_PATH_NS(@"/var/mobile/Library")' in trusted_prefix
+assert_true('ROOT_PATH_NS(@"/var/mobile/Library/Application Support")' in trusted_prefix
             and 'ROOT_PATH_NS(@"/var/jb' not in trusted_prefix,
             "trusted platform prefix must preserve exactly one ROOT_PATH_NS rootless prefix")
 output_test_source = (ROOT / "tests/caml-diagnostic-output.py").read_text()
@@ -289,8 +301,17 @@ assert_true("OpenDirectoryUnderTrustedPrefix" in walk_test_source
             and "legacy all-component no-follow walk" in walk_test_source
             and "events.jsonl" in walk_test_source,
             "executable regression does not run the shared production walk and baseline failure")
+assert_true("policy-matrix" in walk_test_source and "expect-fail" in walk_test_source
+            and "unwrapped" in output_test_source,
+            "regression suite does not cover the observed chains, adversarial topologies, and path selection")
 assert_true("CAML-Diagnostic" in DOC and "/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl" in DOC,
             "implementation document does not name the mobile-writable diagnostic output path")
+assert_true("ValidatePlatformPrefixDescriptor" in DOC and "PlampyCC/CAML-Diagnostic" in DOC,
+            "implementation document does not state the corrected trusted-prefix and owned-suffix contract")
+FLASH = (ROOT / "docs/FLASHLIGHT-DIAGNOSTIC.md").read_text()
+assert_true("Proven path-admission failure" in FLASH and "ValidatePlatformPrefixDescriptor" in FLASH
+            and "/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl" in FLASH,
+            "Flashlight diagnostic note does not record the proven failure and corrected path contract")
 assert_true("plampycc-caml-observer-v2" in DOC and "plampycc-caml-observer-v2-diag" in DOC and "plampycc-caml-observer-v1" not in DOC,
             "implementation document has stale diagnostic build ID")
 assert_true("CompleteLinePrefix" in SOURCE and "events.jsonl.tmp" in SOURCE, "restart tail/temp recovery boundary is missing")

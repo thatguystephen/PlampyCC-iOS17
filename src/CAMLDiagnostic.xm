@@ -247,20 +247,30 @@ private:
 };
 
 static NSString *DiagnosticOutputDirectory(void) {
-    // Diagnostic output is per-user runtime data. Packaged CAML assets use the
-    // system-wide root above, but SpringBoard writes events as mobile under the
-    // mobile-writable root; ROOT_PATH_NS adds exactly one /var/jb prefix.
+    // Diagnostic output is per-user runtime data in the sanctioned rootless
+    // writable-state tree. ROOT_PATH_NS routes it under the jailbreak root
+    // exactly once; on Dopamine that tree is the supported tweak-state
+    // location (libroot rewrites /var/mobile paths into the jbroot and the
+    // sandbox allows mobile writes there). Never emit a bare /var/mobile
+    // literal (unrewritten) and never write below the root-owned /Library
+    // package territory.
     return ROOT_PATH_NS(@"/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic");
 }
 
 static NSString *DiagnosticTrustedPrefix(void) {
-    // /var and /var/jb are platform-managed symlinks. Resolve this allowlisted
-    // prefix once, then keep the tweak-owned suffix descriptor-confined.
-    return ROOT_PATH_NS(@"/var/mobile/Library");
+    // The trusted prefix is the platform-owned mobile Application Support
+    // directory: the direct parent of the tweak-owned suffix and the last
+    // platform-owned component. It is resolved once from this allowlisted
+    // literal with normal symlink resolution and validated under the stated
+    // platform policy (directory; root/mobile-owned; never world-writable;
+    // the mobile-owned form may be group-writable because the sanctioned
+    // mobile data parents ship as mobile:mobile 0755 or 0775). Everything
+    // below it is descriptor-confined with O_NOFOLLOW.
+    return ROOT_PATH_NS(@"/var/mobile/Library/Application Support");
 }
 
 static constexpr const char *kDiagnosticOwnedSuffix =
-    "Application Support/PlampyCC/CAML-Diagnostic";
+    "PlampyCC/CAML-Diagnostic";
 
 static bool ValidateEventFD(int descriptor, size_t *size) {
     struct stat status = {};
