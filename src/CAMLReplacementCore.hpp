@@ -63,6 +63,27 @@ static constexpr Mapping kPackageBundles[] = {
 };
 static constexpr size_t kPackageBundleCount = sizeof(kPackageBundles) / sizeof(kPackageBundles[0]);
 
+// 21D50 stock package-name variants (verified from the LowPowerModule binary,
+// evidence/ios17-module-glyph-seams-21D50.md): CCUILowPowerModuleViewController
+// builds its glyph description with descriptionForPackageNamed:inBundle: using
+// one of four runtime-selected stems — "LowPower", "LowPower-light",
+// "LowPower_IC", "LowPower_IC-light". The theme ships one canonical
+// "LowPower" package, so a variant stem routes through the same bundle and
+// constructs the canonical themed package. Variant entries are deliberately
+// three-field so they are not mistaken for exact-name map entries by the
+// staged-payload table contract (tests/static-check.ts).
+struct VariantMapping {
+    const char *stockPackage; // stock packageURL stem observed on 21D50
+    const char *themePackage; // themed package constructed inside the bundle
+    const char *bundleDirectory;
+};
+static constexpr VariantMapping kVariantPackages[] = {
+    {"LowPower-light", "LowPower", "LowPowerModule.bundle"},
+    {"LowPower_IC", "LowPower", "LowPowerModule.bundle"},
+    {"LowPower_IC-light", "LowPower", "LowPowerModule.bundle"},
+};
+static constexpr size_t kVariantPackageCount = sizeof(kVariantPackages) / sizeof(kVariantPackages[0]);
+
 inline bool Contains(std::string_view value, std::string_view part) {
     return !part.empty() && value.find(part) != std::string_view::npos;
 }
@@ -86,7 +107,24 @@ inline const char *BundleDirectoryForPackage(std::string_view name, Site site, i
             return entry.bundleDirectory;
         }
     }
+    // 21D50 variant stems route through the same theme bundle as their
+    // canonical package (see kVariantPackages).
+    for (const VariantMapping &entry : kVariantPackages) {
+        if (name == entry.stockPackage) return entry.bundleDirectory;
+    }
     return nullptr; // dictionary-miss semantics: fail open
+}
+
+// Themed package to construct for a routed stock stem. Returns nullptr when
+// the stock name is the themed package name (identity — the verified
+// construct-with-original-name route), or the canonical themed package name
+// for a 21D50 variant stem whose themed package is shipped under the
+// canonical name. Construction still fails open when that package is absent.
+inline const char *ThemePackageForPackage(std::string_view name) {
+    for (const VariantMapping &entry : kVariantPackages) {
+        if (name == entry.stockPackage) return entry.themePackage;
+    }
+    return nullptr;
 }
 
 // ---- Live preference reconciliation policy (SP1) ----

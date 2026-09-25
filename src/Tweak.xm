@@ -120,7 +120,12 @@ static void ReconcileFlashlightView(id view) {
                     [view respondsToSelector:@selector(setGlyphImage:)];
     BOOL canSelected = [view respondsToSelector:@selector(selectedGlyphImage)] &&
                        [view respondsToSelector:@selector(setSelectedGlyphImage:)];
-    if (!gEnabled || !unselected || !selected || !canGlyph || !canSelected) {
+    // The glyph slot is the hard requirement. The selected slot is applied
+    // only on hosts that expose both the API and the image: 21D50 round/slider
+    // glyph hosts may carry only the glyph setter, and such a host is themed
+    // in the glyph slot instead of being silently skipped.
+    BOOL applySelected = canSelected && selected != nil;
+    if (!gEnabled || !unselected || !canGlyph) {
         ReleaseFlashlightGlyphs(view);
         return;
     }
@@ -129,18 +134,23 @@ static void ReconcileFlashlightView(id view) {
         ReleaseFlashlightGlyphs(view);
         return;
     }
-    UIImage *currentSelected = SelectedGlyphImage(view);
     UIImage *originalGlyph = state && SameImage(currentGlyph, state[@"appliedGlyph"])
                                  ? state[@"originalGlyph"] : currentGlyph;
-    id originalSelected = state && SameImage(currentSelected, state[@"appliedSelected"])
-                              ? state[@"originalSelected"] : (currentSelected ?: (id)NSNull.null);
     if (!SameImage(currentGlyph, unselected)) SetGlyphImage(view, unselected);
-    if (!SameImage(currentSelected, selected)) SetSelectedGlyphImage(view, selected);
+    id originalSelected = (id)NSNull.null;
+    id appliedSelected = (id)NSNull.null;
+    if (applySelected) {
+        UIImage *currentSelected = SelectedGlyphImage(view);
+        originalSelected = state && SameImage(currentSelected, state[@"appliedSelected"])
+                               ? state[@"originalSelected"] : (currentSelected ?: (id)NSNull.null);
+        if (!SameImage(currentSelected, selected)) SetSelectedGlyphImage(view, selected);
+        appliedSelected = selected;
+    }
     objc_setAssociatedObject(view, "plampy.flashlightGlyphs",
                              @{ @"originalGlyph": originalGlyph,
                                 @"appliedGlyph": unselected,
                                 @"originalSelected": originalSelected,
-                                @"appliedSelected": selected },
+                                @"appliedSelected": appliedSelected },
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
@@ -188,7 +198,19 @@ static void buttonLayout(id self, SEL cmd) {
     [gGlyphViews addObject:self];
     ReconcileGlyphView(self);
 }
-static void roundMove(id self, SEL cmd) { if (orig_roundMove) orig_roundMove(self, cmd); }
+// Hook-map site 3 parity (evidence/caml-static/orig-hook-map.md;
+// docs/CAML-STATIC-ANALYSIS.md §2.2): the original runs the same static glyph
+// path from CCUIRoundButton didMoveToWindow as from CCUIButtonModuleView
+// layoutSubviews, so round-button-hosted glyphs are reconciled on both sites.
+// Glyph writes never re-enter didMoveToWindow, and setter writes converge via
+// SameImage plus the identity cache, so this cannot resurrect the layout
+// watchdog loop.
+static void roundMove(id self, SEL cmd) {
+    if (orig_roundMove) orig_roundMove(self, cmd);
+    if (!gGlyphViews) gGlyphViews = [NSHashTable weakObjectsHashTable];
+    [gGlyphViews addObject:self];
+    ReconcileGlyphView(self);
+}
 
 static UIView *Background(id self) {
     UIView *view = Call(self, @selector(view));

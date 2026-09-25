@@ -18,9 +18,9 @@ The staged assets are checked in under `layout/var/mobile/Library/Application Su
 
 Five runtime observations remain explicit and unclaimed, as listed by the verified ABI map:
 
-1. The complete original package-name dictionary contents were not enumerated; the implementation uses only the reconstructed shipped-package map and fails open on misses.
+1. The complete original package-name dictionary contents were not enumerated; the implementation uses only the reconstructed shipped-package map and fails open on misses. Partially narrowed: `evidence/ios17-module-glyph-seams-21D50.md` §1 enumerates the 21D50 LowPowerModule stems (`LowPower`, `LowPower-light`, `LowPower_IC`, `LowPower_IC-light`); those variant stems now route to the canonical themed `LowPower` package via `kVariantPackages`.
 2. The concrete on-screen slider subclass is not confirmed; the `CCUIBaseSliderView` hook covers the verified superclass path.
-3. The exact base-class seam used by Flashlight, TVRemote, and other modules without per-module setter overrides remains unconfirmed.
+3. The exact base-class seam used by Flashlight, TVRemote, and other modules without per-module setter overrides remains unconfirmed. Partially narrowed: `evidence/ios17-module-glyph-seams-21D50.md` §2 verifies Flashlight as static-only on 21D50 (`setGlyphImage:`/`setSelectedGlyphImage:`, no package description) hosted on a stock `CCUIButtonModuleView`, and closes the clean-room's `CCUIRoundButton didMoveToWindow` hook-site gap plus its strict selected-glyph gate; TVRemote and the remaining modules stay open.
 4. `stateUpdateHandlers` re-registration ordering when a live description is swapped remains unconfirmed.
 5. On-device AMFI/sandbox acceptance of loading the rooted theme bundle outside the app container remains unconfirmed.
 

@@ -12,6 +12,9 @@
 // Route (ABI map §3): build "<theme root>/Assets/<mapped bundle>" from the
 // rooted theme directory, construct a fresh CCUICAPackageDescription with the
 // ORIGINAL package name and that bundle, and hand it to the stock setter.
+// (21D50 variant stems — the LowPower appearance/state names — construct the
+// canonical themed package instead; see kVariantPackages and
+// evidence/ios17-module-glyph-seams-21D50.md.)
 // Every miss (disabled tweak, non-conforming description, consumer without a
 // verified recovery read-back, unmapped name, timer under Pulsar,
 // bundle/initializer failure, nil resolved packageURL, any exception) fails
@@ -246,6 +249,12 @@ extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
                                                                    : caml_replacement::Site::Setter,
                                                         PlampyCCThemeType());
         if (!bundleDirectory) return nil;
+        // 21D50 variant stems (e.g. the LowPower appearance/state variants)
+        // construct the canonical themed package; every other stem keeps the
+        // verified construct-with-original-name route. Missing themed
+        // packages still fail open below.
+        const char *themePackage = caml_replacement::ThemePackageForPackage(name.UTF8String);
+        NSString *packageName = themePackage ? [NSString stringWithUTF8String:themePackage] : name;
 
         Class descriptionClass = objc_getClass("CCUICAPackageDescription");
         if (!descriptionClass) return nil;
@@ -255,7 +264,7 @@ extern "C" id CAMLCreateReplacementDescription(__unsafe_unretained id consumer,
             // does not resolve (missing bundle content or an AMFI/sandbox URL
             // rejection — not separable from here) is released and the next
             // candidate is tried; both misses fail open with the same result.
-            id replacement = CAMLConstructReplacement(root, name, bundleDirectory, descriptionClass);
+            id replacement = CAMLConstructReplacement(root, packageName, bundleDirectory, descriptionClass);
             if (!replacement) continue;
             // Mark the construction as ours for good: later setter inputs that are
             // replacements we built are classified OwnedReplacement and can never

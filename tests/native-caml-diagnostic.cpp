@@ -155,6 +155,21 @@ static void TestReplacementRouting() {
     assert(strcmp(BundleDirectoryForPackage("HAE_1_x_1", Site::Setter, 1), "HearingAidsModule.bundle") == 0);
     assert(strcmp(BundleDirectoryForPackage("Brightness", Site::Setter, 0), "DisplayModule.bundle") == 0);
     assert(strcmp(BundleDirectoryForPackage("Volume", Site::Setter, 0), "MediaControls.framework") == 0);
+    // 21D50 LowPower variant stems (evidence/ios17-module-glyph-seams-21D50.md):
+    // route through the LowPower bundle and construct the canonical themed
+    // package; identity stems construct with their own name.
+    assert(strcmp(BundleDirectoryForPackage("LowPower", Site::Setter, 0), "LowPowerModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("LowPower-light", Site::Setter, 0), "LowPowerModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("LowPower_IC", Site::Setter, 1), "LowPowerModule.bundle") == 0);
+    assert(strcmp(BundleDirectoryForPackage("LowPower_IC-light", Site::Setter, 0), "LowPowerModule.bundle") == 0);
+    assert(strcmp(ThemePackageForPackage("LowPower-light"), "LowPower") == 0);
+    assert(strcmp(ThemePackageForPackage("LowPower_IC"), "LowPower") == 0);
+    assert(strcmp(ThemePackageForPackage("LowPower_IC-light"), "LowPower") == 0);
+    assert(ThemePackageForPackage("LowPower") == nullptr); // identity: stock name
+    assert(ThemePackageForPackage("WiFi") == nullptr);
+    assert(ThemePackageForPackage("unknown-package") == nullptr);
+    // Variant stems do not leak into the slider containsString: route.
+    assert(BundleDirectoryForPackage("LowPower-light", Site::Slider, 0) == nullptr);
     // Fail-open on dictionary-miss semantics and empty identity.
     assert(BundleDirectoryForPackage("unknown-package", Site::Setter, 0) == nullptr);
     assert(BundleDirectoryForPackage("timer1", Site::Setter, 0) == nullptr);
