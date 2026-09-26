@@ -226,6 +226,23 @@ follow-up device observation is one Flashlight expand with a collector build
 carrying this commit, then the `header-hook` records in `events.jsonl`; no
 further collection closes the substitution-vs-forwarding question.
 
+Install root cause (task `t_724201a5`): the first collector build produced
+zero `header-hook` records beside live `header-glyph` records, which proves
+the substitution hook never executed. The install ran at constructor time
+against `CCUIFlashlightBackgroundViewController`, which is defined in the
+Control Center plugin `FlashlightModule.bundle`; that bundle loads only when
+the module UI is built, so the constructor's `NSClassFromString` returned nil
+and `InstallHeaderGlyphHook` silently skipped — a silent availability-gated
+install, never retried. The install now targets the linked, load-time-
+registered seam owner `CCUICustomContentModuleBackgroundViewController` —
+the same class and `v32@0:8@16d24` method the `header-glyph` site already
+hooks at load — and the exact-receiver-class gate inside the hook keeps
+substitution confined to `CCUIFlashlightBackgroundViewController`; any other
+receiver of the seam records `hdr-bypass` and forwards the caller's arguments
+unchanged. When both hooks chain on the method, the inner one's `a` token is
+`PlampyCC`; the `header-hook` decision token, not `a`, is the forwarding
+evidence.
+
 Standing finding (recorded, not changed here): `hdr-unclass` on a caller-side
 stock push shows the input-side stock comparison matched on neither image
 identity against freshly requested stock references nor `_symbolName`, so a

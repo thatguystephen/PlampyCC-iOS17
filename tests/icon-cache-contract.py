@@ -273,6 +273,24 @@ assert_true(
     "the ABI-checked header-glyph hook is not installed at load",
 )
 
+# Install-availability contract (t_724201a5): zero header-hook records beside
+# live header-glyph records proved the substitution hook never executed. The
+# install was availability-gated at constructor time on
+# CCUIFlashlightBackgroundViewController — a class defined in the Control
+# Center plugin FlashlightModule.bundle, which loads after tweak constructors,
+# so the lookup returned nil and the install silently skipped. The install must
+# target the linked, load-time-registered seam owner instead; the
+# exact-receiver-class gate in the hook body keeps behavior confined.
+install_body = function_body(SOURCE, "init_plampycc")
+assert_true(
+    'NSClassFromString(@"CCUICustomContentModuleBackgroundViewController")' in install_body,
+    "the header-glyph hook does not install against the linked seam-owner class",
+)
+assert_true(
+    'NSClassFromString(@"CCUIFlashlightBackgroundViewController")' not in install_body,
+    "the header-glyph install still depends on the lazily loaded Flashlight bundle class",
+)
+
 # Model/source coupling: the verdict the hook records is exactly the
 # forwarding-decision model above — the not-applicable gate defaults to a
 # bypass and the gate verdict is substitution versus fail-open.

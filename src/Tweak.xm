@@ -426,6 +426,17 @@ __attribute__((constructor)) static void init_plampycc(void) {
     Install(overlay, @selector(viewDidLoad), (IMP)overlayLoad, (IMP *)&orig_overlayLoad);
     Install(overlay, @selector(presentAnimated:withCompletionHandler:), (IMP)present, (IMP *)&orig_present);
     Install(overlay, @selector(dismissAnimated:withCompletionHandler:), (IMP)dismiss, (IMP *)&orig_dismiss);
-    Class header = NSClassFromString(@"CCUIFlashlightBackgroundViewController");
+    // Install against the linked, load-time-registered seam owner — the same
+    // class and v32@0:8@16d24 method the header-glyph observer site in
+    // src/CAMLDiagnostic.xm hooks at load — not the Flashlight receiver class:
+    // CCUIFlashlightBackgroundViewController is defined in the Control Center
+    // plugin FlashlightModule.bundle, which loads long after this constructor,
+    // so an install-time NSClassFromString of it returns nil and
+    // InstallHeaderGlyphHook silently skipped (zero header-hook events,
+    // t_724201a5). The exact receiver class gate inside headerGlyph keeps
+    // substitution confined to CCUIFlashlightBackgroundViewController; every
+    // other receiver of the seam records hdr-bypass and forwards the caller's
+    // arguments unchanged.
+    Class header = NSClassFromString(@"CCUICustomContentModuleBackgroundViewController");
     InstallHeaderGlyphHook(header);
 }
