@@ -235,7 +235,7 @@ assert_true(
     re.search(r'if \(!current\) \{\s*TraceGlyph\(view, "skip-id-nil"\);\s*return;', generic),
     "the identifier-change nil-glyph bail must record skip-id-nil before returning",
 )
-assert_true("ScheduleGlyphStabilityCheck(view, unselected)" in flashlight,
+assert_true("ScheduleGlyphStabilityCheck(view, onGlyph)" in flashlight,
             "flashlight apply does not schedule the stability probe")
 assert_true("ScheduleGlyphStabilityCheck(view, image)" in generic,
             "generic apply does not schedule the stability probe")

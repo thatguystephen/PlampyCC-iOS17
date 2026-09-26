@@ -300,6 +300,129 @@ assert_true('const char *decision = "hdr-bypass";' in header_hook
 assert_true('ObserveGlyph(self, decision, "header-hook");' in header_hook,
             "the forwarding-decision model is not what the hook records")
 
+# Compact Flashlight substitution contract (t_fa2754b0, src/Tweak.xm): the
+# Flashlight module re-pushes its state symbols through the compact button
+# setters on every level/state update (evidence/ios17-module-glyph-seams-21D50.md
+# section 2), so the compact seam substitutes in flight like the header seam.
+# State is classified from the pushed symbol only, the cached themed decodes
+# pass through untouched, and every case that cannot be substituted faithfully
+# fails open to the caller's image.
+def compact_argument(*, enabled: bool, module_view: bool, push: object,
+                     on_state: bool, cache: dict[str, object]) -> object:
+    """Decision model of CompactSubstitutedArgument/CompactGlyphSubstitute."""
+    if not enabled or not module_view:
+        return push
+    if push is None or push in ("FlashlightOn", "FlashlightOff"):
+        return push
+    themed = cache.get("FlashlightOn" if on_state else "FlashlightOff")
+    if not isinstance(themed, Themed):
+        return push
+    return themed.name
+
+assert_true(
+    compact_argument(enabled=True, module_view=True, push=INCOMING, on_state=True, cache=decoded)
+    == "FlashlightOn",
+    "on-state compact push does not substitute the cached FlashlightOn image",
+)
+assert_true(
+    compact_argument(enabled=True, module_view=True, push=INCOMING, on_state=False, cache=decoded)
+    == "FlashlightOff",
+    "off-state compact push does not substitute the cached FlashlightOff image",
+)
+assert_true(
+    compact_argument(enabled=True, module_view=True, push="FlashlightOn",
+                     on_state=False, cache=decoded)
+    == "FlashlightOn",
+    "the tweak's own themed decode no longer passes through the compact hook untouched",
+)
+for label, case in {
+    "disabled": dict(enabled=False, module_view=True, push=INCOMING, on_state=True, cache=decoded),
+    "other-module": dict(enabled=True, module_view=False, push=INCOMING, on_state=True, cache=decoded),
+    "nil-push": dict(enabled=True, module_view=True, push=None, on_state=True, cache=decoded),
+    "missing-themed": dict(enabled=True, module_view=True, push=INCOMING, on_state=True,
+                           cache={"FlashlightOff": Themed("FlashlightOff")}),
+    "invalid-themed": dict(enabled=True, module_view=True, push=INCOMING, on_state=True,
+                           cache={"FlashlightOn": object(), "FlashlightOff": Themed("FlashlightOff")}),
+}.items():
+    assert_true(
+        compact_argument(**case) == case["push"],
+        f"compact {label} case does not fail open to the caller's image",
+    )
+
+compact_substitute = function_body(SOURCE, "CompactGlyphSubstitute")
+compact_gate = function_body(SOURCE, "CompactSubstitutedArgument")
+compact_install = function_body(SOURCE, "InstallCompactGlyphHooks")
+compact_abi = function_body(SOURCE, "CompactGlyphEncodingMatches")
+flashlight_body = function_body(SOURCE, "ReconcileFlashlightView")
+assert_true(
+    "if (!image) return nil;" in compact_substitute,
+    "a nil compact push does not fail open",
+)
+assert_true(
+    "image == themedOn || image == themedOff" in compact_substitute
+    and compact_substitute.index("image == themedOn")
+    < compact_substitute.index("systemImageNamed:"),
+    "the tweak's own themed decodes do not pass through before state classification",
+)
+assert_true(
+    'IconImage(@"FlashlightOn")' in compact_substitute
+    and 'IconImage(@"FlashlightOff")' in compact_substitute,
+    "compact substitution does not reuse the cached themed decodes",
+)
+assert_true(
+    "[themed isKindOfClass:UIImage.class] ? themed : nil" in compact_substitute,
+    "compact substitution does not fail open on a nil/missing/invalid themed image",
+)
+assert_true(
+    'NSClassFromString(@"CCUIFlashlightModuleViewController")' in compact_gate
+    and "[AncestorController(self) isKindOfClass:flashlightClass]" in compact_gate,
+    "compact substitution is not confined to the Flashlight module button",
+)
+assert_true(
+    compact_gate.index("gEnabled") < compact_gate.index("CompactGlyphSubstitute("),
+    "compact substitution does not consult the existing functional state first",
+)
+assert_true(
+    '"v24@0:8@16"' in compact_abi and "strcmp(normalized, kExpected) == 0" in compact_abi,
+    "the compact ABI gate does not compare the verified setter shape",
+)
+assert_true(
+    "@selector(setGlyphImage:)" in compact_install
+    and "@selector(setSelectedGlyphImage:)" in compact_install,
+    "the compact hooks do not cover both static glyph setters",
+)
+assert_true(
+    compact_install.count("CompactGlyphEncodingMatches(") == 2
+    and compact_install.index("CompactGlyphEncodingMatches(")
+    < compact_install.index("MSHookMessageEx("),
+    "the compact hooks install without passing the ABI shape check first",
+)
+assert_true(
+    "InstallCompactGlyphHooks(" in install_body,
+    "the compact glyph hooks are not installed at load",
+)
+
+# Compact slot-routing contract (t_fa2754b0): the themed decodes follow the
+# Flashlight module's own write route shape (evidence/caml-static/
+# orig-arm64-layoutglyphs.dis.txt 0x81a4/0x8218 — the on image rides
+# setGlyphImage: and the off image rides setSelectedGlyphImage:), so the
+# on/level slot carries FlashlightOn and the resting off slot carries
+# FlashlightOff.
+assert_true(
+    'UIImage *onGlyph = IconImage(@"FlashlightOn");' in flashlight_body
+    and 'UIImage *offGlyph = IconImage(@"FlashlightOff");' in flashlight_body,
+    "the compact flashlight decodes do not follow the module write route shape",
+)
+assert_true(
+    "SetGlyphImage(view, onGlyph)" in flashlight_body
+    and "SetSelectedGlyphImage(view, offGlyph)" in flashlight_body,
+    "the compact flashlight slots are not filled along the module write route",
+)
+assert_true(
+    "ScheduleGlyphStabilityCheck(view, onGlyph)" in flashlight_body,
+    "the stability probe no longer re-reads the applied glyph slot",
+)
+
 print(
     "PASS: fresh UIImage identity reproduces repeated writes; cached theme/icon identity "
     "converges on pass two, caches misses before filesystem access, and invalidates on reload; "

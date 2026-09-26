@@ -145,8 +145,14 @@ static void ReleaseFlashlightGlyphs(id view) {
 
 static void ReconcileFlashlightView(id view) {
     NSDictionary *state = objc_getAssociatedObject(view, "plampy.flashlightGlyphs");
-    UIImage *unselected = IconImage(@"FlashlightOff");
-    UIImage *selected = IconImage(@"FlashlightOn");
+    // The themed decodes follow the Flashlight module's own write route shape
+    // (evidence/ios17-module-glyph-seams-21D50.md section 2; verified original
+    // at evidence/caml-static/orig-arm64-layoutglyphs.dis.txt 0x81a4/0x8218):
+    // the on/level slot is glyphImage and the resting off slot is
+    // selectedGlyphImage, so the on decode fills the glyph slot and the off
+    // decode fills the selected slot.
+    UIImage *onGlyph = IconImage(@"FlashlightOn");
+    UIImage *offGlyph = IconImage(@"FlashlightOff");
     BOOL canGlyph = [view respondsToSelector:@selector(glyphImage)] &&
                     [view respondsToSelector:@selector(setGlyphImage:)];
     BOOL canSelected = [view respondsToSelector:@selector(selectedGlyphImage)] &&
@@ -155,8 +161,8 @@ static void ReconcileFlashlightView(id view) {
     // only on hosts that expose both the API and the image: 21D50 round/slider
     // glyph hosts may carry only the glyph setter, and such a host is themed
     // in the glyph slot instead of being silently skipped.
-    BOOL applySelected = canSelected && selected != nil;
-    if (!gEnabled || !unselected || !canGlyph) {
+    BOOL applySelected = canSelected && offGlyph != nil;
+    if (!gEnabled || !onGlyph || !canGlyph) {
         TraceGlyph(view, !gEnabled ? "skip-disable"
                                   : (!canGlyph ? "skip-no-api" : "skip-no-img"));
         ReleaseFlashlightGlyphs(view);
@@ -170,24 +176,24 @@ static void ReconcileFlashlightView(id view) {
     }
     UIImage *originalGlyph = state && SameImage(currentGlyph, state[@"appliedGlyph"])
                                  ? state[@"originalGlyph"] : currentGlyph;
-    if (!SameImage(currentGlyph, unselected)) SetGlyphImage(view, unselected);
+    if (!SameImage(currentGlyph, onGlyph)) SetGlyphImage(view, onGlyph);
     id originalSelected = (id)NSNull.null;
     id appliedSelected = (id)NSNull.null;
     if (applySelected) {
         UIImage *currentSelected = SelectedGlyphImage(view);
         originalSelected = state && SameImage(currentSelected, state[@"appliedSelected"])
                                ? state[@"originalSelected"] : (currentSelected ?: (id)NSNull.null);
-        if (!SameImage(currentSelected, selected)) SetSelectedGlyphImage(view, selected);
-        appliedSelected = selected;
+        if (!SameImage(currentSelected, offGlyph)) SetSelectedGlyphImage(view, offGlyph);
+        appliedSelected = offGlyph;
     }
     objc_setAssociatedObject(view, "plampy.flashlightGlyphs",
                              @{ @"originalGlyph": originalGlyph,
-                                @"appliedGlyph": unselected,
+                                @"appliedGlyph": onGlyph,
                                 @"originalSelected": originalSelected,
                                 @"appliedSelected": appliedSelected },
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     TraceGlyph(view, applySelected ? "glyph-sel-ap" : "glyph-appl");
-    ScheduleGlyphStabilityCheck(view, unselected);
+    ScheduleGlyphStabilityCheck(view, onGlyph);
 }
 
 static void ReconcileGlyphView(id view) {
@@ -337,6 +343,88 @@ static void InstallHeaderGlyphHook(Class cls) {
     MSHookMessageEx(cls, sel, (IMP)headerGlyph, (IMP *)&orig_headerGlyph);
 }
 
+// Compact Flashlight glyph substitution for the two static glyph setters of
+// CCUIButtonModuleView. The Flashlight module re-pushes its state SF Symbols
+// through these setters on every flashlight level/state update
+// (evidence/ios17-module-glyph-seams-21D50.md section 2: per-level
+// systemImageNamed:withConfiguration: writes via _updateGlyphForFlashlightLevel:),
+// matching the verified original route shape (FlashlightOn rides setGlyphImage:
+// and FlashlightOff rides setSelectedGlyphImage: at
+// evidence/caml-static/orig-arm64-layoutglyphs.dis.txt 0x81a4/0x8218). A
+// one-shot layout write cannot hold that seam — the module pushes land after
+// it, which left the visible resting slot stock (t_fa2754b0) — so the
+// substitution happens in flight, exactly like the header seam. State is
+// classified from the pushed symbol only (the pinned on symbol is the on
+// state, everything else is the resting off state); the substituted image is
+// the existing cached themed decode; the tweak's own themed decodes pass
+// through untouched so layout writes still converge on image identity; and a
+// nil push or a nil/missing/invalid themed decode fails open to the caller's
+// image.
+static UIImage *CompactGlyphSubstitute(UIImage *image) {
+    if (!image) return nil;
+    UIImage *themedOn = IconImage(@"FlashlightOn");
+    UIImage *themedOff = IconImage(@"FlashlightOff");
+    if (image == themedOn || image == themedOff) return image;
+    static NSString * const kFlashlightOnSymbol = @"flashlight.on.fill";
+    BOOL on = NO;
+    UIImage *plain = [UIImage systemImageNamed:kFlashlightOnSymbol];
+    if (image == plain) {
+        on = YES;
+    } else {
+        NSString *symbolName = Call(image, NSSelectorFromString(@"_symbolName"));
+        on = [symbolName isKindOfClass:NSString.class] && [symbolName isEqualToString:kFlashlightOnSymbol];
+    }
+    UIImage *themed = on ? themedOn : themedOff;
+    return [themed isKindOfClass:UIImage.class] ? themed : nil;
+}
+static UIImage *CompactSubstitutedArgument(id self, UIImage *image) {
+    Class flashlightClass = NSClassFromString(@"CCUIFlashlightModuleViewController");
+    if (gEnabled && flashlightClass && [AncestorController(self) isKindOfClass:flashlightClass]) {
+        UIImage *themed = CompactGlyphSubstitute(image);
+        if (themed) return themed;
+    }
+    return image;
+}
+static void (*orig_compactGlyph)(id, SEL, UIImage *);
+static void (*orig_compactSelected)(id, SEL, UIImage *);
+static void compactSetGlyph(id self, SEL cmd, UIImage *image) {
+    if (orig_compactGlyph) orig_compactGlyph(self, cmd, CompactSubstitutedArgument(self, image));
+}
+static void compactSetSelectedGlyph(id self, SEL cmd, UIImage *image) {
+    if (orig_compactSelected) orig_compactSelected(self, cmd, CompactSubstitutedArgument(self, image));
+}
+// ABI-checked install: both seams are the verified object-setter form of the
+// compact glyph API (v24@0:8@16 after class-annotation stripping, the same
+// normalization policy as the header gate). Any shape mismatch refuses that
+// hook and leaves the stock compact glyph path untouched.
+static BOOL CompactGlyphEncodingMatches(const char *runtimeEncoding) {
+    static const char kExpected[] = "v24@0:8@16";
+    if (!runtimeEncoding) return NO;
+    char normalized[96] = {};
+    size_t out = 0;
+    for (size_t i = 0; runtimeEncoding[i] != '\0' && out + 1 < sizeof(normalized); ++i) {
+        if (runtimeEncoding[i] == '@' && runtimeEncoding[i + 1] == '"') {
+            normalized[out++] = '@';
+            i += 2;
+            while (runtimeEncoding[i] != '\0' && runtimeEncoding[i] != '"') ++i;
+            continue;
+        }
+        normalized[out++] = runtimeEncoding[i];
+    }
+    normalized[out] = '\0';
+    return strcmp(normalized, kExpected) == 0;
+}
+static void InstallCompactGlyphHooks(Class cls) {
+    SEL glyph = @selector(setGlyphImage:);
+    Method glyphMethod = cls ? class_getInstanceMethod(cls, glyph) : NULL;
+    if (glyphMethod && CompactGlyphEncodingMatches(method_getTypeEncoding(glyphMethod)))
+        MSHookMessageEx(cls, glyph, (IMP)compactSetGlyph, (IMP *)&orig_compactGlyph);
+    SEL selected = @selector(setSelectedGlyphImage:);
+    Method selectedMethod = cls ? class_getInstanceMethod(cls, selected) : NULL;
+    if (selectedMethod && CompactGlyphEncodingMatches(method_getTypeEncoding(selectedMethod)))
+        MSHookMessageEx(cls, selected, (IMP)compactSetSelectedGlyph, (IMP *)&orig_compactSelected);
+}
+
 static UIView *Background(id self) {
     UIView *view = Call(self, @selector(view));
     for (UIView *candidate in view.subviews)
@@ -420,6 +508,12 @@ __attribute__((constructor)) static void init_plampycc(void) {
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, ReloadPrefs, (__bridge CFStringRef)kPrefsChanged, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     Class button = NSClassFromString(@"CCUIButtonModuleView");
     Install(button, @selector(layoutSubviews), (IMP)buttonLayout, (IMP *)&orig_layout);
+    // The compact Flashlight seam lives on the same linked, load-time-registered
+    // class (CCUIButtonModuleView is in ControlCenterUIKit, not the lazily
+    // loaded Flashlight plugin), so both static glyph setter hooks install
+    // here at load; the module gate inside them confines substitution to the
+    // Flashlight button and every other receiver forwards unchanged.
+    InstallCompactGlyphHooks(button);
     Class round = NSClassFromString(@"CCUIRoundButton");
     Install(round, @selector(didMoveToWindow), (IMP)roundMove, (IMP *)&orig_roundMove);
     Class overlay = NSClassFromString(@"CCUIModularControlCenterOverlayViewController");
