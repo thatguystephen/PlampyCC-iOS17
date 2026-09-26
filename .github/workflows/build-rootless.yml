@@ -77,29 +77,82 @@ jobs:
           test -n "$source_package"
           dpkg-deb -R "$source_package" "$RUNNER_TEMP/plampycc-package"
           release_dylib="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC.dylib' -print -quit)"
-          source_dylib=""
-          while IFS= read -r candidate; do
-            if nm -a "$candidate" | grep -q 'CAMLButtonPackageHook'; then source_dylib="$candidate"; break; fi
-          done < <(find .theos/obj/arm64 -type f -name 'PlampyCC.dylib' -print)
           source_preferences="$(find "$RUNNER_TEMP/plampycc-package" -type f -name 'PlampyCC' -print -quit)"
+          # Select the unstripped linker companion for one architecture.
+          # .theos/obj/$arch also holds the dSYM DWARF companion
+          # (.theos/obj/$arch/PlampyCC.dylib.dSYM/Contents/Resources/DWARF/PlampyCC.dylib),
+          # which carries the same symbols and UUID as the linked image, so
+          # dSYM paths are excluded, exactly one candidate must survive, and its
+          # identity is proven with file(1): the companion must be a dynamically
+          # linked shared library and never a dSYM companion file. nm output is
+          # captured in full before grepping because `grep -q` closes its stdin
+          # at the first match and llvm-nm then aborts with `LLVM ERROR: IO
+          # failure on output stream: Broken pipe`; under pipefail that racy
+          # abort silently flipped or dropped candidate selection (run
+          # 36107092861 shipped no artifact for exactly this reason).
+          select_unstripped_dylib() {
+            local arch="$1" candidate identity symbol_table selected count
+            selected=""
+            count=0
+            while IFS= read -r candidate; do
+              case "$candidate" in
+                *.dSYM/*) printf 'skipping dSYM debug companion: %s\n' "$candidate" >&2; continue ;;
+              esac
+              identity="$(file -b "$candidate")"
+              case "$identity" in
+                *dSYM*) printf 'skipping dSYM companion: %s (%s)\n' "$candidate" "$identity" >&2; continue ;;
+                *"dynamically linked shared library"*) ;;
+                *) printf 'candidate is not a shared library: %s (%s)\n' "$candidate" "$identity" >&2; continue ;;
+              esac
+              symbol_table="$(nm -a "$candidate")"
+              if printf '%s\n' "$symbol_table" | grep 'CAMLButtonPackageHook' > /dev/null; then
+                selected="$candidate"
+                count=$((count + 1))
+              fi
+            done < <(find ".theos/obj/$arch" -type f -name 'PlampyCC.dylib' -not -path '*.dSYM*' -print)
+            if [ "$count" -ne 1 ]; then
+              printf 'expected exactly one unstripped %s linker companion with CAMLButtonPackageHook, found %d\n' "$arch" "$count" >&2
+              return 1
+            fi
+            printf '%s\n' "$selected"
+          }
+          source_dylib="$(select_unstripped_dylib arm64)"
           test -n "$release_dylib" && test -n "$source_dylib" && test -n "$source_preferences"
           for target in PlampyCC.dylib PlampyCC; do
             if [ "$target" = PlampyCC.dylib ]; then source_binary="$release_dylib"; else source_binary="$source_preferences"; fi
             for arch in arm64 arm64e; do
               if [ "$target" = PlampyCC.dylib ]; then
-                symbol_binary=""
-                while IFS= read -r candidate; do
-                  if nm -a "$candidate" | grep -q 'CAMLButtonPackageHook'; then symbol_binary="$candidate"; break; fi
-                done < <(find ".theos/obj/$arch" -type f -name 'PlampyCC.dylib' -print)
+                symbol_binary="$(select_unstripped_dylib "$arch")"
               else
                 symbol_binary="$source_preferences"
               fi
-              test -n "$symbol_binary"
               if [ "$target" = PlampyCC.dylib ]; then cp "$symbol_binary" "dist/symbols/$arch/$target"; else lipo "$symbol_binary" -thin "$arch" -output "dist/symbols/$arch/$target"; fi
               test -s "dist/symbols/$arch/$target"
             done
             strip -x "$source_binary"
           done
+          # dist/symbols promises the exact unstripped linker companions, so no
+          # staged symbol file may be a dSYM companion file, every staged file
+          # must be Mach-O, and both tweak companions must be linked shared
+          # libraries (run 36108234770 shipped an arm64 dSYM companion here).
+          while IFS= read -r staged_symbol; do
+            identity="$(file -b "$staged_symbol")"
+            case "$identity" in
+              Mach-O*) ;;
+              *) printf 'symbol companion is not Mach-O: %s (%s)\n' "$staged_symbol" "$identity" >&2; exit 1 ;;
+            esac
+            case "$identity" in
+              *dSYM*) printf 'symbol companion is a dSYM: %s (%s)\n' "$staged_symbol" "$identity" >&2; exit 1 ;;
+            esac
+            case "$staged_symbol" in
+              */PlampyCC.dylib)
+                case "$identity" in
+                  *"dynamically linked shared library"*) ;;
+                  *) printf 'tweak symbol companion is not a shared library: %s (%s)\n' "$staged_symbol" "$identity" >&2; exit 1 ;;
+                esac
+                ;;
+            esac
+          done < <(find dist/symbols -type f | sort)
           # Normalize package metadata after all byte mutations. iOS expects
           # root:wheel (numeric 0:0), traversable directories, readable data,
           # and executable Mach-O payloads; do not inherit runner ownership.
