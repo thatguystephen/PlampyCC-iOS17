@@ -14,6 +14,11 @@ static void TestApprovedValues() {
     assert(strcmp(state, "selected") == 0);
     assert(!CopyApproved(state, sizeof(state), "private", ValueKind::State));
     assert(strcmp(state, "unknown-state") == 0);
+    // Functional header-hook forwarding decisions ride the same gate.
+    for (const char *decision : {"hdr-bypass", "hdr-subst", "hdr-failop"}) {
+        assert(CopyApproved(state, sizeof(state), decision, ValueKind::State));
+        assert(strcmp(state, decision) == 0);
+    }
 }
 
 static void TestDedupPolicy() {
@@ -116,6 +121,8 @@ static void TestDiagnosticMappingPolicies() {
     assert(strcmp(ConstructionPathForSite("slider-state"), "state") == 0);
     assert(strcmp(ConstructionPathForSite("factory"), "factory") == 0);
     assert(strcmp(ConstructionPathForSite("controller"), "controller") == 0);
+    assert(strcmp(ConstructionPathForSite("header-glyph"), "header") == 0);
+    assert(strcmp(ConstructionPathForSite("header-hook"), "header") == 0);
     assert(strcmp(ConstructionPathForSite("other"), "unknown") == 0);
     assert(IsLoadClassificationPath("setter"));
     assert(IsLoadClassificationPath("slider"));

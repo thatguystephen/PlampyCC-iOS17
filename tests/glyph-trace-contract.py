@@ -334,6 +334,51 @@ for required in ("CCUICustomContentModuleBackgroundViewController", "UIImage",
 assert_true(len("header-glyph") <= site_wire,
             "the header-glyph site label exceeds the site wire limit")
 
+# Functional header-hook forwarding contract (docs/FLASHLIGHT-DIAGNOSTIC.md):
+# the input-side header-glyph record is the caller's push and cannot show what
+# the substitution hook forwarded, so the functional hook records one
+# privacy-bounded decision token per invocation: a gated bypass, a themed
+# substitution, or a fail-open forward of the caller's image. The fixed token
+# is the whole verdict — no path, pointer, or identifier rides with it.
+hook_states = {"hdr-bypass", "hdr-subst", "hdr-failop"}
+assert_true(hook_states <= set(states),
+            f"header-hook decision tokens missing from kApprovedStates: "
+            f"{sorted(hook_states - set(states))}")
+assert_true(not hook_states & header_states,
+            "header-hook decision tokens overlap the input-side comparison tokens")
+hook_body = function_body(SOURCE, "headerGlyph")
+assert_true('ObserveGlyph(self, decision, "header-hook")' in hook_body,
+            "the functional hook does not record its forwarding decision")
+assert_true(
+    hook_body.index('ObserveGlyph(self, decision, "header-hook")')
+    < hook_body.index("orig_headerGlyph(self, cmd, argument, pointSize)"),
+    "the forwarding decision must be recorded before the original is invoked",
+)
+assert_true('const char *decision = "hdr-bypass";' in hook_body,
+            "the not-applicable gate default is not a bypass verdict")
+assert_true('decision = themed ? "hdr-subst" : "hdr-failop";' in hook_body,
+            "substitution and fail-open verdicts are not distinguished at the hook")
+assert_true(
+    all(token not in hook_body for token in ("hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass")),
+    "the functional hook must not emit input-side comparison verdicts",
+)
+assert_true(all("/" not in token for token in hook_states),
+            "decision tokens must stay fragment-free")
+assert_true(
+    all(len(token) <= wire for token in hook_states),
+    f"decision tokens exceed the {wire}-character state wire limit",
+)
+for token in hook_states | {"header-hook"}:
+    assert_true(f"`{token}`" in DOC,
+                f"wire value missing from {DOC_PATH}: {token}")
+assert_true(len("header-hook") <= site_wire,
+            "the header-hook site label exceeds the site wire limit")
+assert_true('strcmp(site, "header-hook") == 0) return "header"' in CORE,
+            "the header-hook construction path is not mapped in the policy header")
+assert_true('ObserveGlyph(self, decision, "header-hook")' in SOURCE
+            and "%p" not in SOURCE,
+            "the decision record must carry an approved token, never a raw pointer")
+
 print(
     "PASS: ranked flashlight causes map to distinct approved outcome tokens, "
     "tokens serialize untruncated under the wire limit, documented names match "

@@ -287,6 +287,14 @@ static UIImage *HeaderGlyphSubstitute(UIImage *image, double pointSize) {
 }
 static void headerGlyph(id self, SEL cmd, UIImage *image, double pointSize) {
     UIImage *argument = image;
+    // Forwarding-decision trace (docs/FLASHLIGHT-DIAGNOSTIC.md): one approved
+    // token per hook verdict, recorded before the original is invoked. The
+    // input-side header-glyph observer records the caller's push from outside
+    // the chain, so it cannot show what this hook forwarded; only this token
+    // distinguishes a themed substitution from a forward of the caller's own
+    // image. The fixed token is the whole verdict — no path, pointer, or
+    // identifier rides with it.
+    const char *decision = "hdr-bypass";
     Class flashlightClass = NSClassFromString(@"CCUIFlashlightBackgroundViewController");
     // Exact receiver class and existing functional state only: subclass
     // instances, every other class, and a disabled tweak forward the caller's
@@ -294,7 +302,9 @@ static void headerGlyph(id self, SEL cmd, UIImage *image, double pointSize) {
     if (gEnabled && flashlightClass && object_getClass(self) == flashlightClass) {
         UIImage *themed = HeaderGlyphSubstitute(image, pointSize);
         if (themed) argument = themed;
+        decision = themed ? "hdr-subst" : "hdr-failop";
     }
+    ObserveGlyph(self, decision, "header-hook");
     if (orig_headerGlyph) orig_headerGlyph(self, cmd, argument, pointSize);
 }
 // ABI-checked install: the hook is the verified object + 64-bit CGFloat form

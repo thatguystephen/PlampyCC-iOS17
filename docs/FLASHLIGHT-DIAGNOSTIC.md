@@ -190,3 +190,46 @@ Flashlight caller, rules the route out and leaves the compact
 `CCUIButtonModuleView` `setGlyphImage:` write as the visible-layer seam. Any
 `hdr-unclass` record keeps the stock-image question open and must be read
 together with `a`, `i`, and `x`.
+
+## Functional header-glyph forwarding decision (`header-hook`)
+
+Task: `t_de25592e`. The input-side `header-glyph` record cannot show what the
+substitution hook in `src/Tweak.xm` forwarded. Two facts pin the record to the
+caller side of the seam: `a`=`FlashlightModule` is the one-frame caller
+identity of the recording hook itself (a functional hook chained above it
+would record `PlampyCC`), and `x`=`w22h40` is the pushed stock image rather
+than a themed decode (the staged `FlashlightOff`/`FlashlightOn` PNGs are
+80 x 144 and decode to `w80h144`). The flushed record is therefore identical
+whether the functional hook chained beneath the observer and substituted, or
+never installed and the stock image was forwarded. That distinction is
+inherently missing from the existing evidence and needs its own bounded token.
+
+The functional hook records exactly one approved decision token per invocation
+through the same admission/dedup/ring/allowlist path, before the original is
+invoked. The site label is `header-hook`; `c`, `a`, and the shared bounded
+fields are unchanged in meaning, and the record adds no path, pointer,
+identifier, image size, or image class beyond them. The decision tokens:
+
+- `hdr-bypass`: the gate was not applicable (tweak disabled, or receiver not
+  exactly `CCUIFlashlightBackgroundViewController`) and the caller's arguments
+  were forwarded unchanged;
+- `hdr-subst`: the cached themed decode was forwarded in place of the pushed
+  image;
+- `hdr-failop`: the gate passed but no faithful substitution existed (a nil
+  push, or a nil/missing/invalid themed decode), so the caller's image was
+  forwarded unchanged.
+
+Interpretation: `hdr-subst` proves the hook ran and forwarded the themed
+decode; `hdr-bypass` or `hdr-failop` proves the caller's stock image was
+forwarded, and which side of the gate produced that verdict. The single
+follow-up device observation is one Flashlight expand with a collector build
+carrying this commit, then the `header-hook` records in `events.jsonl`; no
+further collection closes the substitution-vs-forwarding question.
+
+Standing finding (recorded, not changed here): `hdr-unclass` on a caller-side
+stock push shows the input-side stock comparison matched on neither image
+identity against freshly requested stock references nor `_symbolName`, so a
+real push can only reach `hdr-stock` when one of those discriminators happens
+to hit. The functional hook's on-state detection uses the same discriminators,
+and the documented policy above already maps an unclassifiable push to the
+resting off state; changing state detection needs new evidence, not a guess.

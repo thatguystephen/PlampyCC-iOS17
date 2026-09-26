@@ -164,6 +164,56 @@ for label, case in fail_open_cases.items():
         f"header-glyph {label} case does not fail open to the caller's arguments",
     )
 
+# Forwarding-decision model (docs/FLASHLIGHT-DIAGNOSTIC.md): the verdict the
+# functional hook records for every invocation. The not-applicable gate is a
+# bypass; a gate pass with nothing valid to forward (nil push or a
+# nil/missing/invalid themed decode) fails open to the caller's image; only a
+# themed decode forwarded is a substitution.
+def header_forward(*, enabled: bool, exact_class: bool, on_state: bool,
+                   cache: dict[str, object], push: object = INCOMING) -> tuple[object, str]:
+    """Decision-token model of headerGlyph in src/Tweak.xm."""
+    if not enabled or not exact_class:
+        return push, "hdr-bypass"
+    themed = None if push is None else cache.get("FlashlightOn" if on_state else "FlashlightOff")
+    if not isinstance(themed, Themed):
+        return push, "hdr-failop"
+    return themed.name, "hdr-subst"
+
+assert_true(
+    header_forward(enabled=True, exact_class=True, on_state=True, cache=decoded)
+    == ("FlashlightOn", "hdr-subst"),
+    "on-state substitution does not record hdr-subst",
+)
+assert_true(
+    header_forward(enabled=True, exact_class=True, on_state=False, cache=decoded)
+    == ("FlashlightOff", "hdr-subst"),
+    "off-state substitution does not record hdr-subst",
+)
+for label, case in {
+    "disabled": dict(enabled=False, exact_class=True, on_state=True, cache=decoded),
+    "other-class": dict(enabled=True, exact_class=False, on_state=True, cache=decoded),
+    "other-class-nil-push": dict(enabled=True, exact_class=False, on_state=False,
+                                 cache=decoded, push=None),
+}.items():
+    assert_true(
+        header_forward(**case)[1] == "hdr-bypass",
+        f"header-glyph {label} case must record the gate-not-applicable verdict",
+    )
+for label, case in {
+    "nil-push": dict(enabled=True, exact_class=True, on_state=False, cache=decoded,
+                     push=None),
+    "nil-themed": dict(enabled=True, exact_class=True, on_state=True,
+                       cache={"FlashlightOn": None, "FlashlightOff": Themed("FlashlightOff")}),
+    "missing-themed": dict(enabled=True, exact_class=True, on_state=False,
+                           cache={"FlashlightOn": Themed("FlashlightOn")}),
+    "invalid-themed": dict(enabled=True, exact_class=True, on_state=False,
+                           cache={"FlashlightOff": object(), "FlashlightOn": Themed("FlashlightOn")}),
+}.items():
+    assert_true(
+        header_forward(**case)[1] == "hdr-failop",
+        f"header-glyph {label} case must record the fail-open verdict",
+    )
+
 header_hook = function_body(SOURCE, "headerGlyph")
 header_substitute = function_body(SOURCE, "HeaderGlyphSubstitute")
 header_install = function_body(SOURCE, "InstallHeaderGlyphHook")
@@ -223,9 +273,19 @@ assert_true(
     "the ABI-checked header-glyph hook is not installed at load",
 )
 
+# Model/source coupling: the verdict the hook records is exactly the
+# forwarding-decision model above — the not-applicable gate defaults to a
+# bypass and the gate verdict is substitution versus fail-open.
+assert_true('const char *decision = "hdr-bypass";' in header_hook
+            and 'decision = themed ? "hdr-subst" : "hdr-failop";' in header_hook,
+            "header-glyph hook verdicts do not match the forwarding-decision model")
+assert_true('ObserveGlyph(self, decision, "header-hook");' in header_hook,
+            "the forwarding-decision model is not what the hook records")
+
 print(
     "PASS: fresh UIImage identity reproduces repeated writes; cached theme/icon identity "
     "converges on pass two, caches misses before filesystem access, and invalidates on reload; "
     "header-glyph substitution stays class/state-bounded, reuses the cached themed decodes, "
-    "and fails open on disabled state, other classes, and nil/missing/invalid themed images"
+    "and fails open on disabled state, other classes, and nil/missing/invalid themed images; "
+    "the recorded forwarding decision matches the bypass/substitute/fail-open model"
 )

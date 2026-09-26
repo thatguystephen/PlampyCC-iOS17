@@ -43,7 +43,13 @@ static constexpr const char *kApprovedStates[] = {
     // cannot-decide verdict so a missing stock match is never over-read as a
     // negative. Allowlist blocks hold string literals only: the contract
     // tests parse every quoted value in them as a token.
-    "hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass"
+    "hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass",
+    // Functional header-hook forwarding decision (docs/FLASHLIGHT-DIAGNOSTIC.md):
+    // one fixed token per forwarded-argument verdict at the substitution hook,
+    // so a flushed record separates a gated bypass, a themed substitution, and
+    // a fail-open forward of the caller's own image — the distinction the
+    // input-side comparison above cannot make.
+    "hdr-bypass", "hdr-subst", "hdr-failop"
 };
 namespace detail {
 inline constexpr size_t TokenLength(const char *token, size_t index = 0) {
@@ -376,6 +382,7 @@ inline const char *ConstructionPathForSite(const char *site) {
     if (strcmp(site, "factory") == 0) return "factory";
     if (strcmp(site, "controller") == 0) return "controller";
     if (strcmp(site, "header-glyph") == 0) return "header";
+    if (strcmp(site, "header-hook") == 0) return "header";
     return "unknown";
 }
 
