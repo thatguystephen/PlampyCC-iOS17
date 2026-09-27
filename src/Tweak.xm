@@ -352,35 +352,21 @@ static void InstallHeaderGlyphHook(Class cls) {
 // and FlashlightOff rides setSelectedGlyphImage: at
 // evidence/caml-static/orig-arm64-layoutglyphs.dis.txt 0x81a4/0x8218). A
 // one-shot layout write cannot hold that seam — the module pushes land after
-// it, which left the visible resting slot stock (t_fa2754b0) — so the
-// substitution happens in flight, exactly like the header seam. State is
-// classified from the pushed symbol only (the pinned on symbol is the on
-// state, everything else is the resting off state); the substituted image is
-// the existing cached themed decode; the tweak's own themed decodes pass
-// through untouched so layout writes still converge on image identity; and a
-// nil push or a nil/missing/invalid themed decode fails open to the caller's
-// image.
-static UIImage *CompactGlyphSubstitute(UIImage *image) {
+// it, which left the visible resting slot stock (t_fa2754b0) — so substitution
+// happens in flight, exactly like the header seam. State is deterministic from
+// the setter slot, not from a private UIImage symbol name: setGlyphImage: is
+// the on/level slot and setSelectedGlyphImage: is the resting off slot. The
+// substituted image is the existing cached themed decode; nil/missing/invalid
+// themed decodes fail open to the caller's image.
+static UIImage *CompactGlyphSubstitute(UIImage *image, BOOL selectedSlot) {
     if (!image) return nil;
-    UIImage *themedOn = IconImage(@"FlashlightOn");
-    UIImage *themedOff = IconImage(@"FlashlightOff");
-    if (image == themedOn || image == themedOff) return image;
-    static NSString * const kFlashlightOnSymbol = @"flashlight.on.fill";
-    BOOL on = NO;
-    UIImage *plain = [UIImage systemImageNamed:kFlashlightOnSymbol];
-    if (image == plain) {
-        on = YES;
-    } else {
-        NSString *symbolName = Call(image, NSSelectorFromString(@"_symbolName"));
-        on = [symbolName isKindOfClass:NSString.class] && [symbolName isEqualToString:kFlashlightOnSymbol];
-    }
-    UIImage *themed = on ? themedOn : themedOff;
+    UIImage *themed = IconImage(selectedSlot ? @"FlashlightOff" : @"FlashlightOn");
     return [themed isKindOfClass:UIImage.class] ? themed : nil;
 }
-static UIImage *CompactSubstitutedArgument(id self, UIImage *image) {
+static UIImage *CompactSubstitutedArgument(id self, UIImage *image, BOOL selectedSlot) {
     Class flashlightClass = NSClassFromString(@"CCUIFlashlightModuleViewController");
     if (gEnabled && flashlightClass && [AncestorController(self) isKindOfClass:flashlightClass]) {
-        UIImage *themed = CompactGlyphSubstitute(image);
+        UIImage *themed = CompactGlyphSubstitute(image, selectedSlot);
         if (themed) return themed;
     }
     return image;
@@ -388,10 +374,10 @@ static UIImage *CompactSubstitutedArgument(id self, UIImage *image) {
 static void (*orig_compactGlyph)(id, SEL, UIImage *);
 static void (*orig_compactSelected)(id, SEL, UIImage *);
 static void compactSetGlyph(id self, SEL cmd, UIImage *image) {
-    if (orig_compactGlyph) orig_compactGlyph(self, cmd, CompactSubstitutedArgument(self, image));
+    if (orig_compactGlyph) orig_compactGlyph(self, cmd, CompactSubstitutedArgument(self, image, NO));
 }
 static void compactSetSelectedGlyph(id self, SEL cmd, UIImage *image) {
-    if (orig_compactSelected) orig_compactSelected(self, cmd, CompactSubstitutedArgument(self, image));
+    if (orig_compactSelected) orig_compactSelected(self, cmd, CompactSubstitutedArgument(self, image, YES));
 }
 // ABI-checked install: both seams are the verified object-setter form of the
 // compact glyph API (v24@0:8@16 after class-annotation stripping, the same

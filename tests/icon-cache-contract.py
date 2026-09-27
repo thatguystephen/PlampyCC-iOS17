@@ -300,48 +300,41 @@ assert_true('const char *decision = "hdr-bypass";' in header_hook
 assert_true('ObserveGlyph(self, decision, "header-hook");' in header_hook,
             "the forwarding-decision model is not what the hook records")
 
-# Compact Flashlight substitution contract (t_fa2754b0, src/Tweak.xm): the
+# Compact Flashlight substitution contract (t_912dc89c, src/Tweak.xm): the
 # Flashlight module re-pushes its state symbols through the compact button
 # setters on every level/state update (evidence/ios17-module-glyph-seams-21D50.md
 # section 2), so the compact seam substitutes in flight like the header seam.
-# State is classified from the pushed symbol only, the cached themed decodes
-# pass through untouched, and every case that cannot be substituted faithfully
-# fails open to the caller's image.
+# State is deterministic from the verified setter slot, not private UIImage
+# metadata: setGlyphImage: is the on/level slot and setSelectedGlyphImage: is
+# the resting off slot. Every case that cannot be substituted faithfully fails
+# open to the caller's image.
 def compact_argument(*, enabled: bool, module_view: bool, push: object,
-                     on_state: bool, cache: dict[str, object]) -> object:
+                     selected_slot: bool, cache: dict[str, object]) -> object:
     """Decision model of CompactSubstitutedArgument/CompactGlyphSubstitute."""
-    if not enabled or not module_view:
+    if not enabled or not module_view or push is None:
         return push
-    if push is None or push in ("FlashlightOn", "FlashlightOff"):
-        return push
-    themed = cache.get("FlashlightOn" if on_state else "FlashlightOff")
+    themed = cache.get("FlashlightOff" if selected_slot else "FlashlightOn")
     if not isinstance(themed, Themed):
         return push
     return themed.name
 
 assert_true(
-    compact_argument(enabled=True, module_view=True, push=INCOMING, on_state=True, cache=decoded)
-    == "FlashlightOn",
-    "on-state compact push does not substitute the cached FlashlightOn image",
+    compact_argument(enabled=True, module_view=True, push=INCOMING,
+                     selected_slot=False, cache=decoded) == "FlashlightOn",
+    "setGlyphImage: does not substitute the cached FlashlightOn image",
 )
 assert_true(
-    compact_argument(enabled=True, module_view=True, push=INCOMING, on_state=False, cache=decoded)
-    == "FlashlightOff",
-    "off-state compact push does not substitute the cached FlashlightOff image",
-)
-assert_true(
-    compact_argument(enabled=True, module_view=True, push="FlashlightOn",
-                     on_state=False, cache=decoded)
-    == "FlashlightOn",
-    "the tweak's own themed decode no longer passes through the compact hook untouched",
+    compact_argument(enabled=True, module_view=True, push=INCOMING,
+                     selected_slot=True, cache=decoded) == "FlashlightOff",
+    "setSelectedGlyphImage: does not substitute the cached FlashlightOff image",
 )
 for label, case in {
-    "disabled": dict(enabled=False, module_view=True, push=INCOMING, on_state=True, cache=decoded),
-    "other-module": dict(enabled=True, module_view=False, push=INCOMING, on_state=True, cache=decoded),
-    "nil-push": dict(enabled=True, module_view=True, push=None, on_state=True, cache=decoded),
-    "missing-themed": dict(enabled=True, module_view=True, push=INCOMING, on_state=True,
+    "disabled": dict(enabled=False, module_view=True, push=INCOMING, selected_slot=False, cache=decoded),
+    "other-module": dict(enabled=True, module_view=False, push=INCOMING, selected_slot=False, cache=decoded),
+    "nil-push": dict(enabled=True, module_view=True, push=None, selected_slot=False, cache=decoded),
+    "missing-themed": dict(enabled=True, module_view=True, push=INCOMING, selected_slot=False,
                            cache={"FlashlightOff": Themed("FlashlightOff")}),
-    "invalid-themed": dict(enabled=True, module_view=True, push=INCOMING, on_state=True,
+    "invalid-themed": dict(enabled=True, module_view=True, push=INCOMING, selected_slot=False,
                            cache={"FlashlightOn": object(), "FlashlightOff": Themed("FlashlightOff")}),
 }.items():
     assert_true(
@@ -359,19 +352,22 @@ assert_true(
     "a nil compact push does not fail open",
 )
 assert_true(
-    "image == themedOn || image == themedOff" in compact_substitute
-    and compact_substitute.index("image == themedOn")
-    < compact_substitute.index("systemImageNamed:"),
-    "the tweak's own themed decodes do not pass through before state classification",
+    "CompactGlyphSubstitute(UIImage *image, BOOL selectedSlot)" in SOURCE
+    and 'selectedSlot ? @"FlashlightOff" : @"FlashlightOn"' in compact_substitute,
+    "compact substitution does not use deterministic setter-slot state",
 )
 assert_true(
-    'IconImage(@"FlashlightOn")' in compact_substitute
-    and 'IconImage(@"FlashlightOff")' in compact_substitute,
-    "compact substitution does not reuse the cached themed decodes",
+    'IconImage(selectedSlot ? @"FlashlightOff" : @"FlashlightOn")' in compact_substitute,
+    "compact substitution does not reuse the slot-selected cached themed decode",
 )
 assert_true(
     "[themed isKindOfClass:UIImage.class] ? themed : nil" in compact_substitute,
     "compact substitution does not fail open on a nil/missing/invalid themed image",
+)
+assert_true(
+    "CompactSubstitutedArgument(self, image, NO)" in SOURCE
+    and "CompactSubstitutedArgument(self, image, YES)" in SOURCE,
+    "compact setter hooks do not pass their deterministic slot state",
 )
 assert_true(
     'NSClassFromString(@"CCUIFlashlightModuleViewController")' in compact_gate
