@@ -12,6 +12,8 @@
 #import "CAMLReplacement.h"
 #import "PlampyCCState.h"
 #include <string.h>
+#include <cmath>
+#include "FlashlightOpticalPolicy.hpp"
 
 static NSString * const kPrefsDomain = @"com.misakaproject.plampyCC";
 static NSString * const kPrefsChanged = @"com.misakaproject.plampyCC.settingsChanged";
@@ -71,29 +73,32 @@ static UIImage *IconImage(NSString *name) {
     gIconImages[cacheKey] = image ?: (id)NSNull.null;
     return image;
 }
-// Sized glyph rendering (t_4b68c639): the glyph pipelines size the rendered
-// art from the UIImage point-size canvas, not from its visible content — a
-// content-only shrink of the theme PNGs (56x80 -> 44x62 in the same 80x144
-// canvas) left both device surfaces visually unchanged while the delivered
-// package provably carried the new bytes. Substitution must therefore hand the
-// setters an image whose canvas matches the stock art it replaces: the
-// pushed/stock image's own size is the sizing peer. This mirrors the original
-// tweak's currentImage construction (evidence/caml-static/orig-arm64-
-// layoutglyphs.dis.txt 0x81b4/0x81f4/0x712c-0x7154: UIGraphics context and
-// drawInRect paired at 25.0 x 48.0) and falls back to those constants when no
-// peer size exists. The art is drawn aspect-fit and centered to preserve the
-// theme artwork's shape, and results are memoized per theme+name+canvas so
-// image identity converges like the raw decode cache.
+// Sized glyph rendering: t_4b68c639 established UIImage canvas sizing as
+// an effective control after a content-only shrink (56x80 -> 44x62 within
+// 80x144) left device output unchanged. Matching the stock canvas fixed the
+// oversized raw raster but IMG_1095.JPG shows that equality is not optical
+// equality: the custom raster has transparent padding and a different shape
+// from the stock SF Symbol. Compact callers now apply the measured policy in
+// FlashlightOpticalPolicy.hpp; the expanded header keeps scale 1.0.
+// The 25x48 fallback retains the original currentImage construction evidence
+// (evidence/caml-static/orig-arm64-layoutglyphs.dis.txt, 0x81b4/0x81f4/
+// 0x712c-0x7154). Art remains centered/aspect-fit. Cache identity includes
+// theme, name, source canvas and optical policy, not just output dimensions.
 static NSMutableDictionary<NSString *, id> *gSizedArt;
-static UIImage *SizedGlyphArt(NSString *name, CGSize canvas) {
+static char kGlyphSourceCanvas;
+static UIImage *SizedGlyphArt(NSString *name, CGSize canvas, CGFloat opticalScale = 1.0) {
+    if (!std::isfinite(canvas.width) || !std::isfinite(canvas.height)) return nil;
     if (canvas.width <= 0 || canvas.height <= 0) canvas = CGSizeMake(25.0, 48.0);
     UIImage *art = IconImage(name);
     if (![art isKindOfClass:UIImage.class]) return nil;
     if (!gSizedArt) gSizedArt = [NSMutableDictionary dictionary];
-    NSString *key = [NSString stringWithFormat:@"%ld:%@:%.3f:%.3f",
-                     (long)gTheme, name, canvas.width, canvas.height];
+    NSString *key = [NSString stringWithFormat:@"%ld:%@:%.3f:%.3f:%.9f",
+                     (long)gTheme, name, canvas.width, canvas.height, opticalScale];
     id cached = gSizedArt[key];
     if (cached) return cached == NSNull.null ? nil : cached;
+    NSValue *sourceCanvas = [NSValue valueWithCGSize:canvas];
+    canvas.width *= opticalScale;
+    canvas.height *= opticalScale;
     UIImage *rendered = nil;
     UIGraphicsBeginImageContextWithOptions(canvas, NO, 0);
     CGFloat scale = MIN(canvas.width / art.size.width, canvas.height / art.size.height);
@@ -103,8 +108,18 @@ static UIImage *SizedGlyphArt(NSString *name, CGSize canvas) {
                                draw.width, draw.height)];
     rendered = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
+    if (rendered) objc_setAssociatedObject(rendered, &kGlyphSourceCanvas,
+                                           sourceCanvas, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     gSizedArt[key] = rendered ?: (id)NSNull.null;
     return rendered;
+}
+// Both the intercepted setter and reconciliation can receive our own output.
+// Recover its stock canvas before scaling, including after preference cache
+// invalidation. Metadata belongs to the image, not to a cache entry or a view.
+static UIImage *SizedCompactGlyphArt(NSString *name, UIImage *peer) {
+    NSValue *sourceCanvas = objc_getAssociatedObject(peer, &kGlyphSourceCanvas);
+    CGSize canvas = sourceCanvas ? [sourceCanvas CGSizeValue] : peer.size;
+    return SizedGlyphArt(name, canvas, flashlight_optical::kCompactScale);
 }
 static UIImage *GlyphImage(id view) { return Call(view, @selector(glyphImage)); }
 static UIImage *SelectedGlyphImage(id view) { return Call(view, @selector(selectedGlyphImage)); }
@@ -187,9 +202,8 @@ static void ReconcileFlashlightView(id view) {
     // tweak's route shape (evidence/caml-static/orig-arm64-layoutglyphs.dis.txt
     // 0x81a4/0x8218: FlashlightOn -> setGlyphImage:) renders reversed against
     // that observation and is deliberately not reproduced. Both images are
-    // rendered through SizedGlyphArt at the replaced slot image's canvas (the
-    // stock symbol is the sizing peer) because the pipelines size from the
-    // UIImage canvas, not the art's visible bounds.
+    // rendered from the stock source canvas with the compact optical policy;
+    // source metadata prevents our own output from becoming a new baseline.
     UIImage *onArt = IconImage(@"FlashlightOn");
     UIImage *offArt = IconImage(@"FlashlightOff");
     BOOL canGlyph = [view respondsToSelector:@selector(glyphImage)] &&
@@ -213,8 +227,8 @@ static void ReconcileFlashlightView(id view) {
         ReleaseFlashlightGlyphs(view);
         return;
     }
-    UIImage *offGlyph = SizedGlyphArt(@"FlashlightOff", currentGlyph.size);
-    UIImage *onGlyph = SizedGlyphArt(@"FlashlightOn", currentGlyph.size);
+    UIImage *offGlyph = SizedCompactGlyphArt(@"FlashlightOff", currentGlyph);
+    UIImage *onGlyph = SizedCompactGlyphArt(@"FlashlightOn", currentGlyph);
     if (!offGlyph) {
         TraceGlyph(view, "skip-no-img");
         ReleaseFlashlightGlyphs(view);
@@ -409,14 +423,14 @@ static void InstallHeaderGlyphHook(Class cls) {
 // slot displays while the flashlight is OFF and the setSelectedGlyphImage:
 // slot while it is ON, so the normal setter carries the FlashlightOff art and
 // the selected setter the FlashlightOn art. Each substituted image is rendered
-// through SizedGlyphArt at the pushed stock image's canvas (the sizing peer)
-// and memoized; a nil push or a nil/missing/invalid themed decode fails open
-// to the caller's image.
+// through SizedCompactGlyphArt using the original stock canvas plus the
+// calibrated optical factor, and memoized; a nil push or a nil/missing/invalid
+// themed decode fails open to the caller's image.
 static UIImage *CompactGlyphSubstitute(UIImage *image, BOOL selectedSlot) {
     if (!image) return nil;
     NSString *name = selectedSlot ? @"FlashlightOn" : @"FlashlightOff";
     if (![IconImage(name) isKindOfClass:UIImage.class]) return nil;
-    UIImage *themed = SizedGlyphArt(name, image.size);
+    UIImage *themed = SizedCompactGlyphArt(name, image);
     return [themed isKindOfClass:UIImage.class] ? themed : nil;
 }
 static UIImage *CompactSubstitutedArgument(id self, UIImage *image, BOOL selectedSlot) {

@@ -368,8 +368,8 @@ assert_true(
     "compact substitution does not map setter slots to the authoritative state art",
 )
 assert_true(
-    "SizedGlyphArt(name, image.size)" in compact_substitute,
-    "compact substitution does not render at the pushed stock image's canvas",
+    "SizedCompactGlyphArt(name, image)" in compact_substitute,
+    "compact substitution does not apply the calibrated optical policy",
 )
 assert_true(
     "[themed isKindOfClass:UIImage.class] ? themed : nil" in compact_substitute,
@@ -401,9 +401,9 @@ assert_true(
     "the reconcile does not track the resting-slot art as applied",
 )
 assert_true(
-    'SizedGlyphArt(@"FlashlightOff", currentGlyph.size)' in flashlight_body
-    and 'SizedGlyphArt(@"FlashlightOn", currentGlyph.size)' in flashlight_body,
-    "the reconcile does not render at the replaced slot image's canvas",
+    'SizedCompactGlyphArt(@"FlashlightOff", currentGlyph)' in flashlight_body
+    and 'SizedCompactGlyphArt(@"FlashlightOn", currentGlyph)' in flashlight_body,
+    "the reconcile does not share the compact optical sizing policy",
 )
 assert_true(
     'kFlashlightOffSymbol = @"flashlight.off.fill"' in SOURCE
