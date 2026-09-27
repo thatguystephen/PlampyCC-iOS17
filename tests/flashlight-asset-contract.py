@@ -94,14 +94,12 @@ for root in ASSET_ROOTS:
         assert_true(path.is_file(), f"missing asset: {path}")
         metrics[str(path)] = rgba_alpha_bbox(path)
         _, _, bbox = metrics[str(path)]
-        visible_width = bbox[2] - bbox[0]
-        visible_height = bbox[3] - bbox[1]
-        assert_true(visible_width <= 48 and visible_height <= 64,
-                    f"{path}: visible glyph remains oversized: {bbox}")
+        assert_true(bbox == (12, 32, 68, 112),
+                    f"{path}: theme art geometry drift (expected original 56x80 content at (12,32)-(68,112), got {bbox})")
 
 for name in NAMES:
     source = (ASSET_ROOTS[0] / name).read_bytes()
     staged = (ASSET_ROOTS[1] / name).read_bytes()
     assert_true(source == staged, f"source and staged {name} assets differ")
 
-print("PASS: Flashlight on/off assets preserve the 80x144 RGBA canvas, use normalized <=48x64 visible bounds in both source and staged theme trees, and remain byte-identical across packaging inputs")
+print("PASS: Flashlight on/off theme art keeps the original 80x144 canvas and 56x80 content geometry in both source and staged trees and remains byte-identical across packaging inputs; render sizing is owned by the SizedGlyphArt peer-canvas normalization, not pixel padding")

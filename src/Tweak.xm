@@ -71,6 +71,41 @@ static UIImage *IconImage(NSString *name) {
     gIconImages[cacheKey] = image ?: (id)NSNull.null;
     return image;
 }
+// Sized glyph rendering (t_4b68c639): the glyph pipelines size the rendered
+// art from the UIImage point-size canvas, not from its visible content — a
+// content-only shrink of the theme PNGs (56x80 -> 44x62 in the same 80x144
+// canvas) left both device surfaces visually unchanged while the delivered
+// package provably carried the new bytes. Substitution must therefore hand the
+// setters an image whose canvas matches the stock art it replaces: the
+// pushed/stock image's own size is the sizing peer. This mirrors the original
+// tweak's currentImage construction (evidence/caml-static/orig-arm64-
+// layoutglyphs.dis.txt 0x81b4/0x81f4/0x712c-0x7154: UIGraphics context and
+// drawInRect paired at 25.0 x 48.0) and falls back to those constants when no
+// peer size exists. The art is drawn aspect-fit and centered to preserve the
+// theme artwork's shape, and results are memoized per theme+name+canvas so
+// image identity converges like the raw decode cache.
+static NSMutableDictionary<NSString *, id> *gSizedArt;
+static UIImage *SizedGlyphArt(NSString *name, CGSize canvas) {
+    if (canvas.width <= 0 || canvas.height <= 0) canvas = CGSizeMake(25.0, 48.0);
+    UIImage *art = IconImage(name);
+    if (![art isKindOfClass:UIImage.class]) return nil;
+    if (!gSizedArt) gSizedArt = [NSMutableDictionary dictionary];
+    NSString *key = [NSString stringWithFormat:@"%ld:%@:%.3f:%.3f",
+                     (long)gTheme, name, canvas.width, canvas.height];
+    id cached = gSizedArt[key];
+    if (cached) return cached == NSNull.null ? nil : cached;
+    UIImage *rendered = nil;
+    UIGraphicsBeginImageContextWithOptions(canvas, NO, 0);
+    CGFloat scale = MIN(canvas.width / art.size.width, canvas.height / art.size.height);
+    CGSize draw = CGSizeMake(art.size.width * scale, art.size.height * scale);
+    [art drawInRect:CGRectMake((canvas.width - draw.width) / 2.0,
+                               (canvas.height - draw.height) / 2.0,
+                               draw.width, draw.height)];
+    rendered = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    gSizedArt[key] = rendered ?: (id)NSNull.null;
+    return rendered;
+}
 static UIImage *GlyphImage(id view) { return Call(view, @selector(glyphImage)); }
 static UIImage *SelectedGlyphImage(id view) { return Call(view, @selector(selectedGlyphImage)); }
 static void SetGlyphImage(id view, UIImage *image) {
@@ -145,14 +180,18 @@ static void ReleaseFlashlightGlyphs(id view) {
 
 static void ReconcileFlashlightView(id view) {
     NSDictionary *state = objc_getAssociatedObject(view, "plampy.flashlightGlyphs");
-    // The themed decodes follow the Flashlight module's own write route shape
-    // (evidence/ios17-module-glyph-seams-21D50.md section 2; verified original
-    // at evidence/caml-static/orig-arm64-layoutglyphs.dis.txt 0x81a4/0x8218):
-    // the on/level slot is glyphImage and the resting off slot is
-    // selectedGlyphImage, so the on decode fills the glyph slot and the off
-    // decode fills the selected slot.
-    UIImage *onGlyph = IconImage(@"FlashlightOn");
-    UIImage *offGlyph = IconImage(@"FlashlightOff");
+    // State-to-art mapping ([ADDRESS], authoritative device observation on
+    // 21D50): the normal glyph slot is displayed while the flashlight is OFF
+    // and the selected slot while it is ON, so the resting slot carries the
+    // FlashlightOff art and the active slot the FlashlightOn art. The original
+    // tweak's route shape (evidence/caml-static/orig-arm64-layoutglyphs.dis.txt
+    // 0x81a4/0x8218: FlashlightOn -> setGlyphImage:) renders reversed against
+    // that observation and is deliberately not reproduced. Both images are
+    // rendered through SizedGlyphArt at the replaced slot image's canvas (the
+    // stock symbol is the sizing peer) because the pipelines size from the
+    // UIImage canvas, not the art's visible bounds.
+    UIImage *onArt = IconImage(@"FlashlightOn");
+    UIImage *offArt = IconImage(@"FlashlightOff");
     BOOL canGlyph = [view respondsToSelector:@selector(glyphImage)] &&
                     [view respondsToSelector:@selector(setGlyphImage:)];
     BOOL canSelected = [view respondsToSelector:@selector(selectedGlyphImage)] &&
@@ -161,8 +200,8 @@ static void ReconcileFlashlightView(id view) {
     // only on hosts that expose both the API and the image: 21D50 round/slider
     // glyph hosts may carry only the glyph setter, and such a host is themed
     // in the glyph slot instead of being silently skipped.
-    BOOL applySelected = canSelected && offGlyph != nil;
-    if (!gEnabled || !onGlyph || !canGlyph) {
+    BOOL applySelected = canSelected && onArt != nil;
+    if (!gEnabled || !offArt || !canGlyph) {
         TraceGlyph(view, !gEnabled ? "skip-disable"
                                   : (!canGlyph ? "skip-no-api" : "skip-no-img"));
         ReleaseFlashlightGlyphs(view);
@@ -174,26 +213,34 @@ static void ReconcileFlashlightView(id view) {
         ReleaseFlashlightGlyphs(view);
         return;
     }
+    UIImage *offGlyph = SizedGlyphArt(@"FlashlightOff", currentGlyph.size);
+    UIImage *onGlyph = SizedGlyphArt(@"FlashlightOn", currentGlyph.size);
+    if (!offGlyph) {
+        TraceGlyph(view, "skip-no-img");
+        ReleaseFlashlightGlyphs(view);
+        return;
+    }
+    applySelected = applySelected && onGlyph != nil;
     UIImage *originalGlyph = state && SameImage(currentGlyph, state[@"appliedGlyph"])
                                  ? state[@"originalGlyph"] : currentGlyph;
-    if (!SameImage(currentGlyph, onGlyph)) SetGlyphImage(view, onGlyph);
+    if (!SameImage(currentGlyph, offGlyph)) SetGlyphImage(view, offGlyph);
     id originalSelected = (id)NSNull.null;
     id appliedSelected = (id)NSNull.null;
     if (applySelected) {
         UIImage *currentSelected = SelectedGlyphImage(view);
         originalSelected = state && SameImage(currentSelected, state[@"appliedSelected"])
                                ? state[@"originalSelected"] : (currentSelected ?: (id)NSNull.null);
-        if (!SameImage(currentSelected, offGlyph)) SetSelectedGlyphImage(view, offGlyph);
-        appliedSelected = offGlyph;
+        if (!SameImage(currentSelected, onGlyph)) SetSelectedGlyphImage(view, onGlyph);
+        appliedSelected = onGlyph;
     }
     objc_setAssociatedObject(view, "plampy.flashlightGlyphs",
                              @{ @"originalGlyph": originalGlyph,
-                                @"appliedGlyph": onGlyph,
+                                @"appliedGlyph": offGlyph,
                                 @"originalSelected": originalSelected,
                                 @"appliedSelected": appliedSelected },
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     TraceGlyph(view, applySelected ? "glyph-sel-ap" : "glyph-appl");
-    ScheduleGlyphStabilityCheck(view, onGlyph);
+    ScheduleGlyphStabilityCheck(view, offGlyph);
 }
 
 static void ReconcileGlyphView(id view) {
@@ -265,28 +312,34 @@ static void roundMove(id self, SEL cmd) {
 
 // Flashlight header-glyph substitution for
 // -[CCUIFlashlightBackgroundViewController setHeaderGlyphImage:unscaledSymbolPointSize:].
-// The pushed stock image carries the flashlight state; only the pinned "on"
-// SF Symbol maps to the on state, and everything else (the "off" symbol or an
-// unclassifiable push) is the resting off state. The substituted image is the
-// existing cached themed decode (IconImage), never a fresh one, so the setter
-// converges on image identity exactly like the static glyph path.
+// The pushed stock image carries the flashlight state. Classification is
+// pinned to the positive off identity only (the plain, point-size-configured,
+// or _symbolName form of flashlight.off.fill): the module pushes per-level
+// variants for the on state (evidence/ios17-module-glyph-seams-21D50.md
+// section 2), and pinning the on symbol instead collapsed every level variant
+// into the off branch ([ADDRESS]), so anything not positively
+// identified as off is the on state. The substituted art is rendered through
+// SizedGlyphArt at the pushed image's own canvas (the stock symbol is the
+// sizing peer) and memoized, so the setter converges on image identity exactly
+// like the static glyph path.
 static UIImage *HeaderGlyphSubstitute(UIImage *image, double pointSize) {
     if (!image) return nil;  // a nil push carries no state to theme: fail open
-    static NSString * const kFlashlightOnSymbol = @"flashlight.on.fill";
-    BOOL on = NO;
-    UIImage *plain = [UIImage systemImageNamed:kFlashlightOnSymbol];
+    static NSString * const kFlashlightOffSymbol = @"flashlight.off.fill";
+    BOOL off = NO;
+    UIImage *plain = [UIImage systemImageNamed:kFlashlightOffSymbol];
     if (image == plain) {
-        on = YES;
+        off = YES;
     } else if (pointSize > 0) {
         UIImageSymbolConfiguration *configuration = [UIImageSymbolConfiguration configurationWithPointSize:pointSize];
-        UIImage *sized = configuration ? [UIImage systemImageNamed:kFlashlightOnSymbol withConfiguration:configuration] : nil;
-        on = sized && image == sized;
+        UIImage *sized = configuration ? [UIImage systemImageNamed:kFlashlightOffSymbol withConfiguration:configuration] : nil;
+        off = sized && image == sized;
     }
-    if (!on) {
+    if (!off) {
         NSString *symbolName = Call(image, NSSelectorFromString(@"_symbolName"));
-        on = [symbolName isKindOfClass:NSString.class] && [symbolName isEqualToString:kFlashlightOnSymbol];
+        off = [symbolName isKindOfClass:NSString.class] && [symbolName isEqualToString:kFlashlightOffSymbol];
     }
-    UIImage *themed = IconImage(on ? @"FlashlightOn" : @"FlashlightOff");
+    NSString *name = off ? @"FlashlightOff" : @"FlashlightOn";
+    UIImage *themed = SizedGlyphArt(name, image.size);
     // Fail open on a nil, missing, or invalid themed image: the caller's own
     // image is forwarded unchanged instead of a broken substitution.
     return [themed isKindOfClass:UIImage.class] ? themed : nil;
@@ -348,19 +401,22 @@ static void InstallHeaderGlyphHook(Class cls) {
 // through these setters on every flashlight level/state update
 // (evidence/ios17-module-glyph-seams-21D50.md section 2: per-level
 // systemImageNamed:withConfiguration: writes via _updateGlyphForFlashlightLevel:),
-// matching the verified original route shape (FlashlightOn rides setGlyphImage:
-// and FlashlightOff rides setSelectedGlyphImage: at
-// evidence/caml-static/orig-arm64-layoutglyphs.dis.txt 0x81a4/0x8218). A
-// one-shot layout write cannot hold that seam — the module pushes land after
-// it, which left the visible resting slot stock (t_fa2754b0) — so substitution
-// happens in flight, exactly like the header seam. State is deterministic from
-// the setter slot, not from a private UIImage symbol name: setGlyphImage: is
-// the on/level slot and setSelectedGlyphImage: is the resting off slot. The
-// substituted image is the existing cached themed decode; nil/missing/invalid
-// themed decodes fail open to the caller's image.
+// so substitution happens in flight, exactly like the header seam — a one-shot
+// layout write cannot hold it (t_fa2754b0). State is deterministic from the
+// setter slot, not from a private UIImage symbol name (sized per-level symbols
+// defeat name classification), and the slot-to-art mapping follows the
+// authoritative device observation (t_4b68c639): the normal setGlyphImage:
+// slot displays while the flashlight is OFF and the setSelectedGlyphImage:
+// slot while it is ON, so the normal setter carries the FlashlightOff art and
+// the selected setter the FlashlightOn art. Each substituted image is rendered
+// through SizedGlyphArt at the pushed stock image's canvas (the sizing peer)
+// and memoized; a nil push or a nil/missing/invalid themed decode fails open
+// to the caller's image.
 static UIImage *CompactGlyphSubstitute(UIImage *image, BOOL selectedSlot) {
     if (!image) return nil;
-    UIImage *themed = IconImage(selectedSlot ? @"FlashlightOff" : @"FlashlightOn");
+    NSString *name = selectedSlot ? @"FlashlightOn" : @"FlashlightOff";
+    if (![IconImage(name) isKindOfClass:UIImage.class]) return nil;
+    UIImage *themed = SizedGlyphArt(name, image.size);
     return [themed isKindOfClass:UIImage.class] ? themed : nil;
 }
 static UIImage *CompactSubstitutedArgument(id self, UIImage *image, BOOL selectedSlot) {
@@ -481,6 +537,7 @@ static void ReloadPrefs(CFNotificationCenterRef center, void *observer, CFString
     gEnabled = [d boolForKey:@"kEnabled"]; gWallpaper = [d boolForKey:@"kWallpaperSwitch"]; gBlur = [d boolForKey:@"kBlurEffectSwitch"]; gTheme = [d integerForKey:@"kThemeType"];
     dispatch_async(dispatch_get_main_queue(), ^{
         [gIconImages removeAllObjects];
+        [gSizedArt removeAllObjects];
         for (id view in gGlyphViews) ReconcileGlyphView(view);
         for (id overlay in gOverlays) ReconcileWallpaper(overlay);
         CAMLReconcilePackageConsumers();

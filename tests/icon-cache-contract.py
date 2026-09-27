@@ -235,8 +235,9 @@ assert_true(
     "a nil header-glyph push does not fail open",
 )
 assert_true(
-    'IconImage(on ? @"FlashlightOn" : @"FlashlightOff")' in header_substitute,
-    "header-glyph substitution does not reuse the cached themed decodes",
+    'NSString *name = off ? @"FlashlightOff" : @"FlashlightOn";' in header_substitute
+    and "SizedGlyphArt(name, image.size)" in header_substitute,
+    "header-glyph substitution does not select the themed art by state and render it memoized",
 )
 assert_true(
     "[themed isKindOfClass:UIImage.class] ? themed : nil" in header_substitute,
@@ -300,42 +301,50 @@ assert_true('const char *decision = "hdr-bypass";' in header_hook
 assert_true('ObserveGlyph(self, decision, "header-hook");' in header_hook,
             "the forwarding-decision model is not what the hook records")
 
-# Compact Flashlight substitution contract (t_912dc89c, src/Tweak.xm): the
-# Flashlight module re-pushes its state symbols through the compact button
-# setters on every level/state update (evidence/ios17-module-glyph-seams-21D50.md
-# section 2), so the compact seam substitutes in flight like the header seam.
-# State is deterministic from the verified setter slot, not private UIImage
-# metadata: setGlyphImage: is the on/level slot and setSelectedGlyphImage: is
-# the resting off slot. Every case that cannot be substituted faithfully fails
-# open to the caller's image.
+# Compact Flashlight substitution contract ([ADDRESS], src/Tweak.xm): the
+# Flashlight module re-pushes per-level state symbols through both compact
+# setters (evidence/ios17-module-glyph-seams-21D50.md section 2), so
+# substitution is in flight like the header seam. State is deterministic from
+# the setter slot, and the slot-to-art mapping follows the authoritative 21D50
+# device observation: the normal setGlyphImage: slot displays while the
+# flashlight is OFF and the setSelectedGlyphImage: slot while it is ON, so the
+# normal setter carries the FlashlightOff art and the selected setter the
+# FlashlightOn art. The 024a373 pairing (normal slot -> FlashlightOn art) is
+# exactly the reversed-mapping regression this model rejects. Substitution
+# renders through SizedGlyphArt at the pushed stock image's canvas (the sizing
+# peer) because the pipelines size from the UIImage canvas, not the visible
+# content: a content-only PNG shrink (56x80 -> 44x62 in the same 80x144
+# canvas) left device rendering unchanged while the delivered package
+# provably carried the new bytes. Every case that cannot be substituted
+# faithfully fails open to the caller's image.
 def compact_argument(*, enabled: bool, module_view: bool, push: object,
                      selected_slot: bool, cache: dict[str, object]) -> object:
     """Decision model of CompactSubstitutedArgument/CompactGlyphSubstitute."""
     if not enabled or not module_view or push is None:
         return push
-    themed = cache.get("FlashlightOff" if selected_slot else "FlashlightOn")
-    if not isinstance(themed, Themed):
+    name = "FlashlightOn" if selected_slot else "FlashlightOff"
+    if not isinstance(cache.get(name), Themed):
         return push
-    return themed.name
+    return f"sized:{name}"
 
 assert_true(
     compact_argument(enabled=True, module_view=True, push=INCOMING,
-                     selected_slot=False, cache=decoded) == "FlashlightOn",
-    "setGlyphImage: does not substitute the cached FlashlightOn image",
+                     selected_slot=False, cache=decoded) == "sized:FlashlightOff",
+    "setGlyphImage: does not render the FlashlightOff art for the resting slot",
 )
 assert_true(
     compact_argument(enabled=True, module_view=True, push=INCOMING,
-                     selected_slot=True, cache=decoded) == "FlashlightOff",
-    "setSelectedGlyphImage: does not substitute the cached FlashlightOff image",
+                     selected_slot=True, cache=decoded) == "sized:FlashlightOn",
+    "setSelectedGlyphImage: does not render the FlashlightOn art for the active slot",
 )
 for label, case in {
     "disabled": dict(enabled=False, module_view=True, push=INCOMING, selected_slot=False, cache=decoded),
     "other-module": dict(enabled=True, module_view=False, push=INCOMING, selected_slot=False, cache=decoded),
     "nil-push": dict(enabled=True, module_view=True, push=None, selected_slot=False, cache=decoded),
     "missing-themed": dict(enabled=True, module_view=True, push=INCOMING, selected_slot=False,
-                           cache={"FlashlightOff": Themed("FlashlightOff")}),
+                           cache={"FlashlightOn": Themed("FlashlightOn")}),
     "invalid-themed": dict(enabled=True, module_view=True, push=INCOMING, selected_slot=False,
-                           cache={"FlashlightOn": object(), "FlashlightOff": Themed("FlashlightOff")}),
+                           cache={"FlashlightOff": object(), "FlashlightOn": Themed("FlashlightOn")}),
 }.items():
     assert_true(
         compact_argument(**case) == case["push"],
@@ -347,18 +356,20 @@ compact_gate = function_body(SOURCE, "CompactSubstitutedArgument")
 compact_install = function_body(SOURCE, "InstallCompactGlyphHooks")
 compact_abi = function_body(SOURCE, "CompactGlyphEncodingMatches")
 flashlight_body = function_body(SOURCE, "ReconcileFlashlightView")
+header_sub = function_body(SOURCE, "HeaderGlyphSubstitute")
+sized_art = function_body(SOURCE, "SizedGlyphArt")
 assert_true(
     "if (!image) return nil;" in compact_substitute,
     "a nil compact push does not fail open",
 )
 assert_true(
     "CompactGlyphSubstitute(UIImage *image, BOOL selectedSlot)" in SOURCE
-    and 'selectedSlot ? @"FlashlightOff" : @"FlashlightOn"' in compact_substitute,
-    "compact substitution does not use deterministic setter-slot state",
+    and 'NSString *name = selectedSlot ? @"FlashlightOn" : @"FlashlightOff";' in compact_substitute,
+    "compact substitution does not map setter slots to the authoritative state art",
 )
 assert_true(
-    'IconImage(selectedSlot ? @"FlashlightOff" : @"FlashlightOn")' in compact_substitute,
-    "compact substitution does not reuse the slot-selected cached themed decode",
+    "SizedGlyphArt(name, image.size)" in compact_substitute,
+    "compact substitution does not render at the pushed stock image's canvas",
 )
 assert_true(
     "[themed isKindOfClass:UIImage.class] ? themed : nil" in compact_substitute,
@@ -368,6 +379,37 @@ assert_true(
     "CompactSubstitutedArgument(self, image, NO)" in SOURCE
     and "CompactSubstitutedArgument(self, image, YES)" in SOURCE,
     "compact setter hooks do not pass their deterministic slot state",
+)
+assert_true(
+    "UIGraphicsBeginImageContextWithOptions" in sized_art
+    and "CGSizeMake(25.0, 48.0)" in sized_art
+    and "drawInRect:" in sized_art,
+    "sized glyph rendering does not mirror the original 25x48 currentImage construction",
+)
+assert_true(
+    "if (!gSizedArt) gSizedArt = [NSMutableDictionary dictionary];" in sized_art
+    and "id cached = gSizedArt[key];" in sized_art,
+    "sized glyph renders are not memoized on image identity",
+)
+assert_true(
+    "SetGlyphImage(view, offGlyph)" in flashlight_body
+    and "SetSelectedGlyphImage(view, onGlyph)" in flashlight_body,
+    "the reconcile does not write FlashlightOff to the resting slot and FlashlightOn to the active slot",
+)
+assert_true(
+    '"appliedGlyph": offGlyph' in flashlight_body,
+    "the reconcile does not track the resting-slot art as applied",
+)
+assert_true(
+    'SizedGlyphArt(@"FlashlightOff", currentGlyph.size)' in flashlight_body
+    and 'SizedGlyphArt(@"FlashlightOn", currentGlyph.size)' in flashlight_body,
+    "the reconcile does not render at the replaced slot image's canvas",
+)
+assert_true(
+    'kFlashlightOffSymbol = @"flashlight.off.fill"' in SOURCE
+    and 'NSString *name = off ? @"FlashlightOff" : @"FlashlightOn";' in header_sub
+    and "SizedGlyphArt(name, image.size)" in header_sub,
+    "the header does not pin the positive off identity and render at the pushed canvas",
 )
 assert_true(
     'NSClassFromString(@"CCUIFlashlightModuleViewController")' in compact_gate
@@ -398,24 +440,24 @@ assert_true(
     "the compact glyph hooks are not installed at load",
 )
 
-# Compact slot-routing contract (t_fa2754b0): the themed decodes follow the
-# Flashlight module's own write route shape (evidence/caml-static/
-# orig-arm64-layoutglyphs.dis.txt 0x81a4/0x8218 — the on image rides
-# setGlyphImage: and the off image rides setSelectedGlyphImage:), so the
-# on/level slot carries FlashlightOn and the resting off slot carries
-# FlashlightOff.
+# Compact slot-routing contract ([ADDRESS]): on 21D50 the normal
+# glyphImage slot displays while the flashlight is OFF and the selected slot
+# while it is ON (authoritative device observation), so the resting slot
+# carries FlashlightOff and the active slot FlashlightOn — the inverse of the
+# original route pairing at evidence/caml-static/orig-arm64-layoutglyphs.dis.txt
+# 0x81a4/0x8218, which renders reversed and is deliberately not reproduced.
 assert_true(
-    'UIImage *onGlyph = IconImage(@"FlashlightOn");' in flashlight_body
-    and 'UIImage *offGlyph = IconImage(@"FlashlightOff");' in flashlight_body,
-    "the compact flashlight decodes do not follow the module write route shape",
+    'UIImage *onArt = IconImage(@"FlashlightOn");' in flashlight_body
+    and 'UIImage *offArt = IconImage(@"FlashlightOff");' in flashlight_body,
+    "the compact flashlight decodes are not both present for the state slots",
 )
 assert_true(
-    "SetGlyphImage(view, onGlyph)" in flashlight_body
-    and "SetSelectedGlyphImage(view, offGlyph)" in flashlight_body,
-    "the compact flashlight slots are not filled along the module write route",
+    "SetGlyphImage(view, offGlyph)" in flashlight_body
+    and "SetSelectedGlyphImage(view, onGlyph)" in flashlight_body,
+    "the compact flashlight slots are not filled per the authoritative state mapping",
 )
 assert_true(
-    "ScheduleGlyphStabilityCheck(view, onGlyph)" in flashlight_body,
+    "ScheduleGlyphStabilityCheck(view, offGlyph)" in flashlight_body,
     "the stability probe no longer re-reads the applied glyph slot",
 )
 
