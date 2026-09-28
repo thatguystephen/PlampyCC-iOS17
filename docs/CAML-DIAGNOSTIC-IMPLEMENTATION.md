@@ -28,6 +28,12 @@ Live preference reconciliation extends the same construct-and-pass route across 
 
 The hooks are installed once and are never dynamically unhooked or rehooked. Event admission is controlled by the compile-time `PLAMPYCC_DIAGNOSTIC_BUILD` constant: `make ... DIAGNOSTIC=1` emits the temporary collector, while omission emits a release binary that can never record regardless of cfprefsd state. `kDiagnosticVerbose` remains the only runtime diagnostic gate and controls the high-volume factory observer in collector builds. Preference changes refresh verbosity through the existing Darwin notification seam only; no preference writes occur from a hook. Logging failures disable diagnostics for the remainder of the process and every original IMP continues.
 
+## Shipped build disposition
+
+The shipping package is the release build. The workflow's make line omits the collector flag, so the emitted binary carries build ID `plampycc-caml-observer-v2` and can never record: the compile-time admission constant is false and no preference, key, or reset can enable recording. The collector build (`make clean package FINALPACKAGE=1 STRIP=0 DIAGNOSTIC=1 THEOS_PACKAGE_SCHEME=rootless`, build ID `plampycc-caml-observer-v2-diag`) is an explicit, temporary, local fault-isolation act for device-authorized investigations — for example the five runtime observations in `CAML-ROUTING-BLOCKER.md` — and never the shipping default.
+
+The recorder source stays compile-gated rather than deleted because the hook surface is also the functional replacement seam and the collector is the proven evidence path for future fault isolation. The release cost is bounded and stated: each hook pays exactly one POD admission check that fails closed, with no message send, retain, allocation, logging, or filesystem write past it. A device previously installed with a collector build keeps recording until it is replaced by a release package; that replacement is a device-authorized install task and is not performed here.
+
 ## Log path and fixed schema
 
 When enabled, bounded events are appended to the per-user, mobile-writable root:

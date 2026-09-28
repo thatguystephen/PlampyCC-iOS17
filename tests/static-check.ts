@@ -59,7 +59,7 @@ assert(workflow.includes("SHA256SUMS") && workflow.includes("tests/caml-diagnost
 assert(workflow.includes("TARGET_CODESIGN = ldid") && workflow.includes("TARGET_CODESIGN_FLAGS ?= -S"), "workflow does not verify the pinned Theos signing step");
 assert(workflow.includes("ldid -S \"$staged_file\"") && workflow.includes("tests/signature-contract.py --package"), "final packaged Mach-Os are not re-signed and signature-verified after stripping");
 assert(workflow.includes("sudo chown -R 0:0") && workflow.includes("chmod 0755") && workflow.includes("chmod 0644"), "final package root:wheel ownership and safe-mode normalization are missing");
-assert(workflow.includes("DIAGNOSTIC=1"), "temporary collector workflow does not request the diagnostic build mode");
+assert(!/^\s*make clean package[^\n]*DIAGNOSTIC=1/m.test(workflow), "shipping workflow must build release mode; the collector flag stays a local fault-isolation build");
 assert(workflow.indexOf("strip -x \"$source_binary\"") < workflow.indexOf("ldid -S \"$staged_file\"") && workflow.indexOf("ldid -S \"$staged_file\"") < workflow.indexOf("dpkg-deb -b \"$RUNNER_TEMP/plampycc-package\""), "post-strip re-sign does not precede repacking");
 assert(workflow.includes("cmp \"$packaged_file\" \"$RUNNER_TEMP/plampycc-package$relative\""), "packaged bytes are not proven unchanged since signing");
 assert(provenance.includes("ldid -S"), "provenance does not record the pinned signing step");

@@ -1,0 +1,9 @@
+# Regenerable cache and build outputs. Evidence and analysis directories
+# (.ci-artifacts/, evidence/, reviews/) are intentionally NOT ignored: they are
+# workspace audit records kept on disk and deliberately untracked (see
+# docs/CLEANUP-INVENTORY.md).
+__pycache__/
+*.pyc
+.theos/
+packages/
+dist/

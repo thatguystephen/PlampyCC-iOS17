@@ -69,9 +69,12 @@ jobs:
           # Build the exact release binary once without stripping. The package is
           # then copied, stripped in place, and repacked so UUIDs and function
           # starts remain identical between each companion and final slice.
-          # This task intentionally emits the temporary diagnostic collector;
-          # omission of DIAGNOSTIC=1 remains the release-mode proof path.
-          make clean package FINALPACKAGE=1 STRIP=0 DIAGNOSTIC=1 THEOS_PACKAGE_SCHEME=rootless
+          # Shipping builds are release mode: the make line omits the collector
+          # flag, which is the release-mode proof path (a release binary can
+          # never record). The temporary collector is an explicit local
+          # fault-isolation build through the Makefile's DIAGNOSTIC flag and is
+          # never the shipping default. See docs/CAML-DIAGNOSTIC-IMPLEMENTATION.md.
+          make clean package FINALPACKAGE=1 STRIP=0 THEOS_PACKAGE_SCHEME=rootless
           rm -rf dist
           mkdir -p dist/packages dist/symbols/arm64 dist/symbols/arm64e "$RUNNER_TEMP/plampycc-package"
           source_package="$(find packages -type f -name '*.deb' -print -quit)"
