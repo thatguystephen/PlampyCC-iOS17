@@ -17,7 +17,7 @@ Non-device lane (default; always available, no dispatch):
 bun /home/steph/.hermes/skills/software-development/theos-package-build/scripts/verify-package.ts --json .ci-artifacts/run-36345021394/plampycc-rootless-package
 ```
 
-Ready when the JSON result reports all twelve gates passing (deb payload ownership/modes, unstripped companions, final CodeDirectory signatures, declared checksums, manifest). The named artifact is the preserved output of CI run [PHONE].
+Ready when the JSON result reports all twelve gates passing (deb payload ownership/modes, unstripped companions, final CodeDirectory signatures, declared checksums, manifest). The named artifact is the preserved output of CI run run-36345021394.
 
 CI lane (only when the change touches packaging inputs AND a separate task explicitly authorizes a dispatch):
 
@@ -28,7 +28,7 @@ gh run download <run-id> --dir .ci-artifacts/run-<run-id>
 python3 -B tests/caml-diagnostic-artifact.py .ci-artifacts/run-<run-id>/plampycc-rootless-package
 ```
 
-The workflow is `workflow_dispatch` on `thatguystephen/PlampyCC-iOS17`, pinned to the Apple Silicon `macos-15` runner, Xcode 16.4, Theos `5280bd0…`, SDK `146e41ff…`. It builds release mode (the `DIAGNOSTIC` flag omitted), retains unstripped companions in `symbols/{arm64,arm64e}`, strips and re-signs the packaged bytes, and emits `packages/`, `SHA256SUMS`, `build-manifest.json`, `source-commit.txt`, `toolchain.txt`, `xcode-version.txt`. `tests/caml-diagnostic-artifact.py` needs otool/lipo/nm and runs on macOS only (the CI runner or a Mac), not on the [ADDRESS] host — on this host use the non-device lane's `verify-package.ts` instead.
+The workflow is `workflow_dispatch` on `thatguystephen/PlampyCC-iOS17`, pinned to the Apple Silicon `macos-15` runner, Xcode 16.4, Theos `5280bd0…`, SDK `146e41ff…`. It builds release mode (the `DIAGNOSTIC` flag omitted), retains unstripped companions in `symbols/{arm64,arm64e}`, strips and re-signs the packaged bytes, and emits `packages/`, `SHA256SUMS`, `build-manifest.json`, `source-commit.txt`, `toolchain.txt`, `xcode-version.txt`. `tests/caml-diagnostic-artifact.py` needs otool/lipo/nm and runs on macOS only (the CI runner or a Mac), not on the Linux host — on this host use the non-device lane's `verify-package.ts` instead.
 
 Teardown: none. `.ci-artifacts/` is preserved input evidence, not verification-started state — never delete it.
 

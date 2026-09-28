@@ -31,7 +31,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - Capture the user action and the resulting state, not only the final output.
 - Gate proof includes the command, stdout, stderr, exit code, and the PASS line.
-- Package proof includes the verifier's [ADDRESS] result (all twelve gates).
+- Package proof includes the verifier's JSON result (all twelve gates).
 - Record the feature ID and entry point used with every artifact.
 - Report an unreachable path with the attempted command and the unmet precondition.
 - Do not report a skipped entry point as verified through a different path; the device-only gap is always stated explicitly.

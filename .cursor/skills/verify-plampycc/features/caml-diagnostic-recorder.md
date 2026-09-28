@@ -20,7 +20,7 @@ This surface is deliberately invisible in shipping builds (release mode omits th
 
 Preconditions:
 
-- Repo root as CWD on the Linux host ([ADDRESS], g++).
+- Repo root as CWD on the Linux host (python3, g++).
 - `git status --porcelain` shows exactly the intended diff.
 
 - **Admission and ring behavior.** (Collector build action: any hook firing produces at most one admitted event per site.) Run `python3 -B tests/caml-diagnostic-contract.py`. One PASS line, exit 0. Primitive admission is POD-only and fails closed; the compile-time constant supersedes cfprefsd; source boundary split (non-ARC hooks / ARC observers / portable policies / injected syscall adapter); deterministic descriptor construction precedes installation; `tests/native-caml-diagnostic.cpp` exercises allowlists, dedup, ring/session bounds, short-write and state-fault transitions.

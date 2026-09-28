@@ -22,7 +22,7 @@ Sources: `prefs/` (`RootListController.m`, `Makefile`, `Root.plist`, `Info.plist
 
 Preconditions:
 
-- Repo root as CWD on the Linux host ([ADDRESS], g++, bun).
+- Repo root as CWD on the Linux host (python3, g++, bun).
 - `git status --porcelain` shows exactly the intended diff.
 
 - **Specifier lifecycle.** (User action: open the pane, scroll, leave and reopen it.) Run `python3 -B tests/prefs-arc-contract.py`. One PASS line, exit 0. The gate reproduces the MRC dangling-`_specifiers` failure against the retained/ARC assignment that survives a pool drain; asserts the prefs bundle compiles with `-fobjc-arc` and the flag lands before the bundle make include; asserts the gate is wired into CI.

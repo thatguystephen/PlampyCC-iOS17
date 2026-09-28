@@ -23,7 +23,7 @@ Sources: `src/Tweak.xm` (`SizedGlyphArt`, `SizedCompactGlyphArt`, `kGlyphSourceC
 
 Preconditions:
 
-- Repo root as CWD on the Linux host ([ADDRESS], g++).
+- Repo root as CWD on the Linux host (python3, g++).
 - `git status --porcelain` shows exactly the intended diff.
 
 - **Sizing policy.** (User action: compare the compact glyph against a measured peer module glyph.) Run `python3 -B tests/flashlight-optical-contract.py`. One PASS line, exit 0. It compiles `tests/native-flashlight-optical.cpp` against the production `FlashlightOpticalPolicy.hpp` constants and asserts the measured-peer bounds (scale 79/52 within [73/53, 80/51]; geometric-equality and raw-canvas fallbacks rejected; feedback model stable), plus source wiring: optical policy integrated, source-canvas recovery, separate header/compact cache keys, reload invalidation.

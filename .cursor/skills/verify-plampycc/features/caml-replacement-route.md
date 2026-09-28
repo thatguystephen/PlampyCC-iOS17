@@ -22,7 +22,7 @@ Sources: `src/CAMLReplacement.xm` (Objective-C adapter), `src/CAMLReplacementCor
 
 Preconditions:
 
-- Repo root as CWD on the Linux host ([ADDRESS], g++, bun).
+- Repo root as CWD on the Linux host (python3, g++, bun).
 - `git status --porcelain` shows exactly the intended diff.
 
 - **Hook ordering and ownership.** (User action: install, re-toggle, and re-assign the module — the setter seams.) Run `python3 -B tests/caml-diagnostic-contract.py`. One PASS line, exit 0. The hook shim is the non-ARC boundary: observe → replace → original → record → exactly-once release ordering, borrowed description never released, fail-open factory boundary, MRR release form centralized in one helper. It compiles and runs `tests/native-caml-diagnostic.cpp`, exercising the production recovery transitions across all three setter seams (owned re-assignment keeps the real stock original, factory misses keep ownership, only genuinely newer stock is adopted).
