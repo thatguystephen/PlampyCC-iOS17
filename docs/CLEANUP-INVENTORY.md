@@ -24,6 +24,10 @@ Post-build cleanup pass (task `t_274f0c57`). Rule applied: remove only artifacts
 
 `.gitignore` now excludes the regenerable classes (`__pycache__/`, `*.pyc`, `.theos/`, `packages/`, `dist/`). The evidence directories stay visible-but-untracked on purpose.
 
+## Companion record
+
+`docs/REPO-CLEANUP-[PHONE].md` is the parallel cleanup pass's fuller record (per-set `.ci-artifacts/` disposition with citations, the supplied-package provenance of `xyz.cypwn.plampycc_1.0.deb`). Two additional proven-duplicate containers were removed by that pass and are recorded there: `.ci-artifacts/run-36264722853-zip/` (byte-identical to `run-36264722853/`) and `reviews/candidate-15327c1-artifact.zip` (byte-identical to `caml-diagnostic-15327c1/` contents). Both were moved, not deleted: the bytes sit in tool-managed scratch `~/.hermes/profiles/daisy/cache/scratch/repo-cleanup-[PHONE]/` (verified present on disk), which auto-prunes after 24h idle.
+
 ## Diagnostics disposition
 
 Full record: `docs/CAML-DIAGNOSTIC-IMPLEMENTATION.md` § "Shipped build disposition".
