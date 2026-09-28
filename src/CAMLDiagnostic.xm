@@ -25,9 +25,16 @@
 #include "CAMLReplacementCore.hpp"
 #import "PlampyCCState.h"
 
+#if defined(PLAMPYCC_DIAGNOSTIC_BUILD)
+// Collector-only verbosity plumbing. The release build never records, so it
+// performs no diagnostic preference reads and registers no preference
+// observer: gDiagnosticVerbose stays false and is only ever consulted past
+// the compile-time admission constant anyway. See
+// docs/CAML-DIAGNOSTIC-IMPLEMENTATION.md ("Shipped build disposition").
 static const char kDiagnosticPrefsDomain[] = "com.misakaproject.plampyCC";
 static CFStringRef const kDiagnosticPrefsChanged = CFSTR("com.misakaproject.plampyCC.settingsChanged");
 static const char kDiagnosticVerboseKey[] = "kDiagnosticVerbose";
+#endif
 #if defined(PLAMPYCC_DIAGNOSTIC_BUILD)
 // Collector build: the bounded recorder is compiled in and records by default.
 // This compile-time constant is what supersedes cfprefsd: recording cannot be
@@ -952,6 +959,8 @@ extern "C" __attribute__((noinline, used)) void InstallCAMLDiagnosticSites(CAMLD
     }
 }
 
+#if defined(PLAMPYCC_DIAGNOSTIC_BUILD)
+// Collector-only: release builds skip this entire preference surface.
 static void RefreshDiagnosticPreferences(void) {
     @try {
         NSString *domain = [NSString stringWithUTF8String:kDiagnosticPrefsDomain];
@@ -969,14 +978,19 @@ static void DiagnosticPreferencesChanged(CFNotificationCenterRef center, void *o
     (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
     RefreshDiagnosticPreferences();
 }
+#endif
 
 __attribute__((constructor)) static void InitializeCAMLDiagnostic(void) {
     @try {
         DiagnosticUUID();
+#if defined(PLAMPYCC_DIAGNOSTIC_BUILD)
+        // Collector-only verbosity refresh; release builds do no diagnostic
+        // preference I/O and register no preference observer.
         RefreshDiagnosticPreferences();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                         DiagnosticPreferencesChanged, kDiagnosticPrefsChanged,
                                         NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+#endif
         CAMLDiagnosticSite sites[kDiagnosticSiteCount] = {};
         size_t siteCount = BuildCAMLDiagnosticSites(sites, kDiagnosticSiteCount);
         if (siteCount == kDiagnosticSiteCount) InstallCAMLDiagnosticSites(sites, siteCount);
