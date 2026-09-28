@@ -24,6 +24,8 @@ static NSMutableDictionary<NSString *, id> *gIconImages;
 static void (*orig_layout)(id, SEL), (*orig_roundMove)(id, SEL);
 static void (*orig_overlayLoad)(id, SEL), (*orig_present)(id, SEL, BOOL, id), (*orig_dismiss)(id, SEL, BOOL, id);
 static void (*orig_headerGlyph)(id, SEL, id, double);
+static __thread BOOL gCompactGlyphForwarding;
+static char kFlashlightOwnedView;
 
 static NSString *ThemeName(void) { return gTheme == 1 ? @"Pulsar" : @"Plampy"; }
 static NSArray<NSString *> *AssetRoots(void) {
@@ -263,7 +265,9 @@ static void ReconcileGlyphView(id view) {
         return;
     }
     Class flashlightClass = NSClassFromString(@"CCUIFlashlightModuleViewController");
-    if (flashlightClass && [AncestorController(view) isKindOfClass:flashlightClass]) {
+    BOOL flashlightOwned = flashlightClass && [AncestorController(view) isKindOfClass:flashlightClass];
+    objc_setAssociatedObject(view, &kFlashlightOwnedView, @(flashlightOwned), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (flashlightOwned) {
         ReleaseGlyphOverride(view);
         ReconcileFlashlightView(view);
         return;
@@ -434,8 +438,7 @@ static UIImage *CompactGlyphSubstitute(UIImage *image, BOOL selectedSlot) {
     return [themed isKindOfClass:UIImage.class] ? themed : nil;
 }
 static UIImage *CompactSubstitutedArgument(id self, UIImage *image, BOOL selectedSlot) {
-    Class flashlightClass = NSClassFromString(@"CCUIFlashlightModuleViewController");
-    if (gEnabled && flashlightClass && [AncestorController(self) isKindOfClass:flashlightClass]) {
+    if (gEnabled && [objc_getAssociatedObject(self, &kFlashlightOwnedView) boolValue]) {
         UIImage *themed = CompactGlyphSubstitute(image, selectedSlot);
         if (themed) return themed;
     }
@@ -444,10 +447,18 @@ static UIImage *CompactSubstitutedArgument(id self, UIImage *image, BOOL selecte
 static void (*orig_compactGlyph)(id, SEL, UIImage *);
 static void (*orig_compactSelected)(id, SEL, UIImage *);
 static void compactSetGlyph(id self, SEL cmd, UIImage *image) {
-    if (orig_compactGlyph) orig_compactGlyph(self, cmd, CompactSubstitutedArgument(self, image, NO));
+    UIImage *argument = gCompactGlyphForwarding ? image : CompactSubstitutedArgument(self, image, NO);
+    if (!orig_compactGlyph) return;
+    gCompactGlyphForwarding = YES;
+    @try { orig_compactGlyph(self, cmd, argument); }
+    @finally { gCompactGlyphForwarding = NO; }
 }
 static void compactSetSelectedGlyph(id self, SEL cmd, UIImage *image) {
-    if (orig_compactSelected) orig_compactSelected(self, cmd, CompactSubstitutedArgument(self, image, YES));
+    UIImage *argument = gCompactGlyphForwarding ? image : CompactSubstitutedArgument(self, image, YES);
+    if (!orig_compactSelected) return;
+    gCompactGlyphForwarding = YES;
+    @try { orig_compactSelected(self, cmd, argument); }
+    @finally { gCompactGlyphForwarding = NO; }
 }
 // ABI-checked install: both seams are the verified object-setter form of the
 // compact glyph API (v24@0:8@16 after class-annotation stripping, the same

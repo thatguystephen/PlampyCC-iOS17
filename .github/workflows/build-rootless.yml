@@ -61,6 +61,7 @@ jobs:
           set -euo pipefail
           python3 -B tests/icon-cache-contract.py
           python3 -B tests/flashlight-optical-contract.py
+          python3 -B tests/compact-glyph-hook-contract.py
           python3 -B tests/prefs-arc-contract.py
           python3 -B tests/caml-diagnostic-contract.py
           python3 -B tests/glyph-trace-contract.py
