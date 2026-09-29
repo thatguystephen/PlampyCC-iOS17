@@ -49,6 +49,27 @@ const hex32 = (value: number): string => `0x${value.toString(16).padStart(8, "0"
 // Unsigned single-bit mask; `1 << 31` overflows a signed JS int32 otherwise.
 const bitFor = (index: number): number => (1 << index) >>> 0;
 
+// ---- canonical order -------------------------------------------------------
+//
+// Manifest record order is NOT artifact identity. The typed CapabilityId /
+// ModuleId enums use canonical census (contract) order, so every ordinal-indexed
+// array must also be emitted in contract order: otherwise `kCapabilities[enum]`
+// would resolve a manifest-order record. A valid manifest reorder therefore
+// produces a byte-identical artifact, and every enum ordinal always resolves to
+// the record with that identity. Records are sorted here by their census rank;
+// ties (never present after validation) fall back to first-seen order.
+function canonicalOrder<T>(records: readonly T[], idOf: (record: T) => string, contractIds: readonly string[]): T[] {
+  const rank = new Map<string, number>(contractIds.map((id, index) => [id, index]));
+  return records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => {
+      const leftRank = rank.get(idOf(left.record)) ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = rank.get(idOf(right.record)) ?? Number.MAX_SAFE_INTEGER;
+      return leftRank - rightRank || left.index - right.index;
+    })
+    .map((entry) => entry.record);
+}
+
 // Escape a manifest string for embedding in a C++ string literal. Backslash and
 // double quote are escaped, and any other control character becomes a fixed
 // three-digit octal escape so a following octal digit cannot make it ambiguous.
@@ -119,21 +140,31 @@ function canonicalEvidence(
     });
 }
 
-// Canonical catalog serialization (seed order is canonical). A change to any
-// record, route, alias, disposition, lifecycle-evidence record, or
+// Canonical catalog serialization. Record ORDER is not catalog identity:
+// modules and capabilities serialize in canonical census (contract) order, the
+// activation set in census order, adapters and seams by name, and lifecycle
+// evidence records by map key (already sorted by canonicalEvidence). A change
+// to any record, route, alias, disposition, lifecycle-evidence record, or
 // renderer-adapter declaration changes the catalog digest — which is the
-// catalog artifact identity. The selected stage and the activation set are
+// catalog artifact identity. A pure record reorder does not (reorder-safe:
+// enums are ordinal-indexed in census order, so the digest and the emitted
+// arrays remain byte-stable). The selected stage and the activation set are
 // deliberately absent: activation identity is the activation-set digest alone.
-function canonicalCatalog(input: ManifestData): Record<string, unknown> {
+function canonicalCatalog(input: ManifestData, contract: CensusContract): Record<string, unknown> {
+  const modules = canonicalOrder(input.modules, (module) => module.id, contract.moduleIds);
+  const capabilities = canonicalOrder(input.capabilities, (capability) => capability.id, contract.capabilityIds);
+  const adapters = [...input.rendererFamilyAdapters]
+    .map((adapter) => ({ ...adapter, seams: [...adapter.seams].sort((a, b) => a.name.localeCompare(b.name)) }))
+    .sort((a, b) => a.family.localeCompare(b.family));
   return {
     schema: input.schema,
     target: input.target,
-    modules: input.modules.map((module) => ({
+    modules: modules.map((module) => ({
       id: module.id,
       safeDefault: module.safeDefault,
       capabilities: module.capabilities,
     })),
-    capabilities: input.capabilities.map((capability) => ({
+    capabilities: capabilities.map((capability) => ({
       id: capability.id,
       module: capability.module,
       localIndex: capability.localIndex,
@@ -155,17 +186,25 @@ function canonicalCatalog(input: ManifestData): Record<string, unknown> {
         : null,
       deviceVector: capability.deviceVector,
     })),
-    rendererFamilyAdapters: input.rendererFamilyAdapters,
+    rendererFamilyAdapters: adapters,
     lifecycleEvidenceRecords: canonicalEvidence(input.lifecycleEvidenceRecords),
   };
 }
 
-export function computeDigests(input: ManifestData): { catalog: string; activationSet: string } {
-  const catalog = sha256Hex(JSON.stringify(canonicalCatalog(input)));
+export function computeDigests(
+  input: ManifestData,
+  contract: CensusContract = CONTRACT_21D50,
+): { catalog: string; activationSet: string } {
+  const catalog = sha256Hex(JSON.stringify(canonicalCatalog(input, contract)));
+  const activeCapabilities = canonicalOrder(
+    input.selectedStage.activeCapabilities.map((id) => id),
+    (id) => id,
+    contract.capabilityIds,
+  );
   const activationSet = sha256Hex(
     JSON.stringify({
       stage: input.selectedStage.name,
-      activeCapabilities: input.selectedStage.activeCapabilities,
+      activeCapabilities,
     }),
   );
   return { catalog, activationSet };
@@ -187,8 +226,11 @@ function renderHeader(
     return ordinal >= 0 ? (accumulator | bitFor(ordinal)) >>> 0 : accumulator;
   }, 0);
   const activeHex = hex32(bitset);
-  const capabilities = input.capabilities;
-  const modules = input.modules;
+  // Emit both ordinal-indexed tables in canonical census order so a typed enum
+  // ordinal always resolves to the record with that identity, independent of
+  // the manifest's record order.
+  const capabilities = canonicalOrder(input.capabilities, (capability) => capability.id, contract.capabilityIds);
+  const modules = canonicalOrder(input.modules, (module) => module.id, contract.moduleIds);
 
   const lines: string[] = [];
   const push = (text: string) => lines.push(text);
@@ -415,6 +457,19 @@ function renderJson(
     (accumulator, ordinal) => (ordinal >= 0 ? (accumulator | bitFor(ordinal)) >>> 0 : accumulator),
     0,
   );
+  const capabilities = canonicalOrder(input.capabilities, (capability) => capability.id, contract.capabilityIds);
+  const modules = canonicalOrder(input.modules, (module) => module.id, contract.moduleIds);
+  const activeCapabilities = canonicalOrder(
+    input.selectedStage.activeCapabilities.map((id) => id),
+    (id) => id,
+    contract.capabilityIds,
+  );
+  const evidenceRecordsSorted = Object.keys(input.lifecycleEvidenceRecords)
+    .sort()
+    .reduce<Record<string, unknown>>((accumulator, key) => {
+      accumulator[key] = input.lifecycleEvidenceRecords[key];
+      return accumulator;
+    }, {});
   const payload = {
     schema: "plampycc-theme-catalog/v1",
     generator: "tools/theme-catalog/generate.ts",
@@ -430,17 +485,17 @@ function renderJson(
       eligible: contract.eligibleIds.length,
       stockOnly: contract.capabilityIds.length - contract.eligibleIds.length,
     },
-    selectedStage: input.selectedStage,
+    selectedStage: { name: input.selectedStage.name, activeCapabilities },
     activationBitset: `0x${bitset.toString(16).padStart(4, "0")}`,
     catalogDigest: `sha256:${digests.catalog}`,
     activationSetDigest: `sha256:${digests.activationSet}`,
     stageCardinality: { Q0: 0, A1: 1, A2: 4, A3: contract.eligibleIds.length, R1: contract.eligibleIds.length },
-    modules: input.modules.map((module) => ({
+    modules: modules.map((module) => ({
       id: module.id,
       safeDefault: module.safeDefault,
       capabilities: module.capabilities,
     })),
-    capabilities: input.capabilities.map((capability, ordinal) => ({
+    capabilities: capabilities.map((capability, ordinal) => ({
       ordinal,
       id: capability.id,
       module: capability.module,
@@ -453,7 +508,7 @@ function renderJson(
       hostForm: capability.hostForm,
       lifecycleEvidence: capability.lifecycleEvidence,
       activationEligible: capability.disposition === "eligible",
-      active: input.selectedStage.activeCapabilities.includes(capability.id),
+      active: activeCapabilities.includes(capability.id),
       stockAliases: capability.stockAliases,
       stockAssets: capability.stockAssets,
       aliasDisambiguation: capability.aliasDisambiguation ?? null,
@@ -464,7 +519,7 @@ function renderJson(
     // renderer-adapter declarations that generation validated. Not parsed by
     // SpringBoard.
     rendererFamilyAdapters: input.rendererFamilyAdapters,
-    lifecycleEvidence: input.lifecycleEvidenceRecords,
+    lifecycleEvidence: evidenceRecordsSorted,
   };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }
@@ -493,7 +548,7 @@ export function renderCatalog(
     const detail = result.errors.map((error) => `[${error.code}] ${error.message}`).join("\n");
     throw new Error(`theme catalog generation failed:\n${detail}`);
   }
-  const digests = computeDigests(input);
+  const digests = computeDigests(input, contract);
   return {
     header: renderHeader(input, contract, digests),
     json: renderJson(input, contract, digests),

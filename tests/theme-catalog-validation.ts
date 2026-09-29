@@ -18,6 +18,9 @@ import { manifest } from "../manifest/theme-manifest.ts";
 import {
   CONTRACT_21D50,
   validateManifest,
+  validateSelectorEncoding,
+  selectorArgumentCount,
+  parseMethodEncoding,
   type CensusContract,
   type ValidationCode,
   type ValidationResult,
@@ -396,6 +399,105 @@ expect("evidence", (copy) => {
     };
   });
   assert(result.ok, `complete direct evidence A2 should validate: ${JSON.stringify(result.errors)}`);
+}
+
+// ---- ABI-encoding adversarial fixtures (direct parser assertions) ----------
+// Lifecycle selector evidence must be a real arm64 method signature matching
+// the shape the typed evidence record declares, not a plausible token.
+{
+  assert(parseMethodEncoding("v24@0:8@16") !== null, "v24@0:8@16 must parse");
+  assert(parseMethodEncoding("v16@0:8") !== null, "v16@0:8 must parse");
+  assert(selectorArgumentCount("layoutSubviews") === 0, "0-colon selector must declare 0 arguments");
+  assert(selectorArgumentCount("setGlyphPackageDescription:") === 1, "1-colon selector must declare 1 argument");
+  assert(selectorArgumentCount("doThis:withThat:") === 2, "2-colon selector must declare 2 arguments");
+  assert(selectorArgumentCount("viewWillMoveToWindow:nil") === null, "unterminated selector must be malformed");
+
+  assert(validateSelectorEncoding("v24@0:8@16", "setGlyphPackageDescription:") === null, "valid bind encoding must be accepted");
+  assert(validateSelectorEncoding("v16@0:8", "layoutSubviews") === null, "valid 0-arg encoding must be accepted");
+
+  // Scalar/object tokens and bare types are not method signatures.
+  for (const bad of ["i", "q", "v", "B", "@\"NSString\"", "@", ":"]) {
+    assert(validateSelectorEncoding(bad, "layoutSubviews") !== null, `accepted non-signature encoding ${bad}`);
+  }
+  // Missing self / missing _cmd.
+  assert(validateSelectorEncoding("v24:8@16", "setGlyphPackageDescription:") !== null, "accepted encoding without self");
+  assert(validateSelectorEncoding("v24@0@16", "setGlyphPackageDescription:") !== null, "accepted encoding without _cmd");
+  assert(validateSelectorEncoding("v16:8", "layoutSubviews") !== null, "accepted 0-arg encoding without self");
+  assert(validateSelectorEncoding("v16@0", "layoutSubviews") !== null, "accepted 0-arg encoding without _cmd");
+  // Wrong colon arity in both directions.
+  assert(validateSelectorEncoding("v16@0:8", "setGlyphPackageDescription:") !== null, "accepted 0-arg encoding for a 1-colon selector");
+  assert(validateSelectorEncoding("v24@0:8@16", "layoutSubviews") !== null, "accepted 1-arg encoding for a 0-colon selector");
+  // Truncated / inconsistent frame, offsets, dangling type or offset.
+  for (const bad of ["v24@0:8@", "v24@0", "v24", "v24@0:8@1", "v32@0:8@16", "v24@0:8@24"]) {
+    assert(validateSelectorEncoding(bad, "setGlyphPackageDescription:") !== null, `accepted malformed encoding ${bad}`);
+  }
+  // Plausible-but-wrong explicit argument types.
+  for (const bad of ["v24@0:8#16", "v24@0:8*16", "v24@0:8@?16", "v24@0:8:16", "v24@0:8q16", "v24@0:8^v16", "v24@0:8f16", "v24@0:8B16"]) {
+    assert(validateSelectorEncoding(bad, "setGlyphPackageDescription:") !== null, `accepted wrong explicit argument type ${bad}`);
+  }
+}
+
+// ---- ABI-encoding adversarial fixtures (end-to-end through validateManifest) ----
+{
+  const setBindEncoding = (copy: MutableManifest, encoding: string): void => {
+    const record = buildEvidence("low-power", "LowPowerModule");
+    const bind = record.selectors.find((selector) => selector.role === "bind");
+    assert(bind !== undefined, "bind selector missing from fixture");
+    bind.encoding = encoding;
+    copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+    byCapability(copy, "low-power").lifecycleEvidence = "evidence:low-power";
+  };
+  expect("evidence", (copy) => setBindEncoding(copy, "i")); // scalar-only token
+  expect("evidence", (copy) => setBindEncoding(copy, "v24:8@16")); // missing self
+  expect("evidence", (copy) => setBindEncoding(copy, "v24@0@16")); // missing _cmd
+  expect("evidence", (copy) => setBindEncoding(copy, "v16@0:8")); // selector/encoding arity mismatch
+  expect("evidence", (copy) => setBindEncoding(copy, "v24@0:8@")); // truncated
+  expect("evidence", (copy) => setBindEncoding(copy, "v24@0:8#16")); // plausible-but-wrong argument type
+}
+
+// ---- ordinal reorder-safety (canonical emission) ---------------------------
+// Manifest record order is not artifact identity. Swapping the first two
+// capability (or module) records cannot produce a valid mismatched artifact:
+// generation emits ordinal-indexed arrays in canonical census order, so a
+// reorder is both valid AND byte-identical, and every emitted ordinal still
+// resolves to the matching contract identity.
+{
+  const base = renderCatalog(manifest);
+  const swapped = cloneManifest();
+  const [first, second] = [swapped.capabilities[0]!, swapped.capabilities[1]!];
+  swapped.capabilities[0] = second;
+  swapped.capabilities[1] = first;
+  const valid = validateManifest(swapped, { contract: CONTRACT_21D50, assetExists: validAssetExists });
+  assert(valid.ok, `capability record reorder must remain valid: ${JSON.stringify(valid.errors)}`);
+  const rerendered = renderCatalog(swapped);
+  assert(rerendered.header === base.header, "capability reorder changed the header (canonical emission violated)");
+  assert(rerendered.json === base.json, "capability reorder changed the JSON (canonical emission violated)");
+  const sidecar = JSON.parse(rerendered.json) as {
+    capabilities: Array<{ ordinal: number; id: string }>;
+    modules: Array<{ id: string }>;
+  };
+  sidecar.capabilities.forEach((capability, index) => {
+    assert(capability.ordinal === index, `capability ordinal drift at ${index}`);
+    assert(
+      capability.id === CONTRACT_21D50.capabilityIds[index],
+      `capability ordinal ${index} resolved to the wrong identity ${capability.id}`,
+    );
+  });
+  sidecar.modules.forEach((module, index) => {
+    assert(module.id === CONTRACT_21D50.moduleIds[index], `module ordinal ${index} resolved to the wrong identity ${module.id}`);
+  });
+}
+{
+  const base = renderCatalog(manifest);
+  const swapped = cloneManifest();
+  const [first, second] = [swapped.modules[0]!, swapped.modules[1]!];
+  swapped.modules[0] = second;
+  swapped.modules[1] = first;
+  const valid = validateManifest(swapped, { contract: CONTRACT_21D50, assetExists: validAssetExists });
+  assert(valid.ok, `module record reorder must remain valid: ${JSON.stringify(valid.errors)}`);
+  const rerendered = renderCatalog(swapped);
+  assert(rerendered.header === base.header, "module reorder changed the header (canonical emission violated)");
+  assert(rerendered.json === base.json, "module reorder changed the JSON (canonical emission violated)");
 }
 
 // ---- existing-family extension fixture ----

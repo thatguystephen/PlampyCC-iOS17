@@ -98,6 +98,100 @@ int main() {
     }
     assert(coverage == (1ull << kCapabilityCount) - 1u);
 
+    // ---- enum-ordinal resolution -------------------------------------------
+    // Every typed CapabilityId / ModuleId ordinal must resolve to the matching
+    // record identity and ownership. This pins the canonical 21D50 census by
+    // enumerator name: the generated enum value for each enumerator must index
+    // the record whose idString and owning Module record match that identity.
+    struct CapabilityBinding { CapabilityId id; const char *idString; const char *module; };
+    static const CapabilityBinding kCapabilityBindings[] = {
+        {CapabilityId::AccessibilityGuidedAccess, "accessibility-guided-access", "AccessibilityGuidedAccessControlCenterModule"},
+        {CapabilityId::AccessibilityShortcuts, "accessibility-shortcuts", "AccessibilityShorcutsModule"},
+        {CapabilityId::AccessibilitySoundDetection, "accessibility-sound-detection", "AccessibilitySoundDetectionControlCenterModule"},
+        {CapabilityId::AccessibilityTextSize, "accessibility-text-size", "AccessibilityTextSizeModule"},
+        {CapabilityId::AirplayMirroring, "airplay-mirroring", "AirPlayMirroringModule"},
+        {CapabilityId::Alarm, "alarm", "AlarmModule"},
+        {CapabilityId::Appearance, "appearance", "AppearanceModule"},
+        {CapabilityId::Calculator, "calculator", "CalculatorModule"},
+        {CapabilityId::Camera, "camera", "CameraModule"},
+        {CapabilityId::ConnectivityCaml, "connectivity-caml", "ConnectivityModule"},
+        {CapabilityId::ConnectivityGlyphs, "connectivity-glyphs", "ConnectivityModule"},
+        {CapabilityId::DisplayBrightness, "display-brightness", "DisplayModule"},
+        {CapabilityId::DisplayCatalog, "display-catalog", "DisplayModule"},
+        {CapabilityId::Flashlight, "flashlight", "FlashlightModule"},
+        {CapabilityId::Focus, "focus", "FocusUI"},
+        {CapabilityId::HearingAids, "hearing-aids", "HearingAidsModule"},
+        {CapabilityId::LowPower, "low-power", "LowPowerModule"},
+        {CapabilityId::Magnifier, "magnifier", "MagnifierModule"},
+        {CapabilityId::MediaControlsVolume, "media-controls-volume", "MediaControls"},
+        {CapabilityId::Mute, "mute", "MuteModule"},
+        {CapabilityId::Nfc, "nfc", "NFCControlCenterModule"},
+        {CapabilityId::OrientationLock, "orientation-lock", "OrientationLockModule"},
+        {CapabilityId::PerformanceTrace, "performance-trace", "PerformanceTraceModule"},
+        {CapabilityId::QrCode, "qr-code", "QRCodeModule"},
+        {CapabilityId::Replaykit, "replaykit", "ReplayKitModule"},
+        {CapabilityId::Shazam, "shazam", "ShazamModule"},
+        {CapabilityId::SpringboardRinger, "springboard-ringer", "SpringBoard_Ringer"},
+        {CapabilityId::Stopwatch, "stopwatch", "StopwatchModule"},
+        {CapabilityId::Timer, "timer", "TimerModule"},
+        {CapabilityId::TvRemote, "tv-remote", "TVRemoteModule"},
+        {CapabilityId::VoiceMemos, "voice-memos", "VoiceMemosModule"},
+        {CapabilityId::Wallet, "wallet", "WalletModule"},
+    };
+    static_assert(sizeof(kCapabilityBindings) / sizeof(kCapabilityBindings[0]) == kCapabilityCount,
+                  "capability binding table must enumerate the full census");
+    for (std::size_t i = 0; i < kCapabilityCount; ++i) {
+        const CapabilityBinding &binding = kCapabilityBindings[i];
+        const std::size_t ordinal = static_cast<std::size_t>(binding.id);
+        assert(ordinal == i);              // enum values are the dense contract ordinals
+        const CapabilityEntry &entry = kCapabilities[ordinal];
+        assert(entry.id == binding.id);
+        assert(std::strcmp(entry.idString, binding.idString) == 0);
+        assert(std::strcmp(kModules[static_cast<std::size_t>(entry.module)].idString, binding.module) == 0);
+    }
+
+    struct ModuleBinding { ModuleId id; const char *idString; };
+    static const ModuleBinding kModuleBindings[] = {
+        {ModuleId::AccessibilityGuidedAccessControlCenterModule, "AccessibilityGuidedAccessControlCenterModule"},
+        {ModuleId::AccessibilityShorcutsModule, "AccessibilityShorcutsModule"},
+        {ModuleId::AccessibilitySoundDetectionControlCenterModule, "AccessibilitySoundDetectionControlCenterModule"},
+        {ModuleId::AccessibilityTextSizeModule, "AccessibilityTextSizeModule"},
+        {ModuleId::AirPlayMirroringModule, "AirPlayMirroringModule"},
+        {ModuleId::AlarmModule, "AlarmModule"},
+        {ModuleId::AppearanceModule, "AppearanceModule"},
+        {ModuleId::CalculatorModule, "CalculatorModule"},
+        {ModuleId::CameraModule, "CameraModule"},
+        {ModuleId::ConnectivityModule, "ConnectivityModule"},
+        {ModuleId::DisplayModule, "DisplayModule"},
+        {ModuleId::FlashlightModule, "FlashlightModule"},
+        {ModuleId::FocusUI, "FocusUI"},
+        {ModuleId::HearingAidsModule, "HearingAidsModule"},
+        {ModuleId::LowPowerModule, "LowPowerModule"},
+        {ModuleId::MagnifierModule, "MagnifierModule"},
+        {ModuleId::MediaControls, "MediaControls"},
+        {ModuleId::MuteModule, "MuteModule"},
+        {ModuleId::NFCControlCenterModule, "NFCControlCenterModule"},
+        {ModuleId::OrientationLockModule, "OrientationLockModule"},
+        {ModuleId::PerformanceTraceModule, "PerformanceTraceModule"},
+        {ModuleId::QRCodeModule, "QRCodeModule"},
+        {ModuleId::ReplayKitModule, "ReplayKitModule"},
+        {ModuleId::ShazamModule, "ShazamModule"},
+        {ModuleId::SpringBoard_Ringer, "SpringBoard_Ringer"},
+        {ModuleId::StopwatchModule, "StopwatchModule"},
+        {ModuleId::TimerModule, "TimerModule"},
+        {ModuleId::TVRemoteModule, "TVRemoteModule"},
+        {ModuleId::VoiceMemosModule, "VoiceMemosModule"},
+        {ModuleId::WalletModule, "WalletModule"},
+    };
+    static_assert(sizeof(kModuleBindings) / sizeof(kModuleBindings[0]) == kModuleCount,
+                  "module binding table must enumerate the full census");
+    for (std::size_t i = 0; i < kModuleCount; ++i) {
+        const ModuleBinding &binding = kModuleBindings[i];
+        assert(static_cast<std::size_t>(binding.id) == i);
+        assert(kModules[i].id == binding.id);
+        assert(std::strcmp(kModules[i].idString, binding.idString) == 0);
+    }
+
     assert(std::strncmp(kCatalogDigest, "sha256:", 7) == 0);
     assert(std::strncmp(kActivationSetDigest, "sha256:", 7) == 0);
     assert(kActiveCapabilityBits == 0u);
@@ -106,6 +200,6 @@ int main() {
     assert(std::strcmp(kTargetProductVersion, "17.3") == 0);
     assert(std::strcmp(kTargetBuild, "21D50") == 0);
 
-    std::printf("PASS: native theme catalog (30 module records inspected, 32 capabilities, 13 eligible, 19 stock-only, Q0 empty; unique tags; constant-time ID lookup; every module->capability ownership edge verified; exact target)\n");
+    std::printf("PASS: native theme catalog (30 module records inspected, 32 capabilities, 13 eligible, 19 stock-only, Q0 empty; unique tags; constant-time ID lookup; every module->capability ownership edge and every enum-ordinal -> record identity/ownership resolved; exact target)\n");
     return 0;
 }

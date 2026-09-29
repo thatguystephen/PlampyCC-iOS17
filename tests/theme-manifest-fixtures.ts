@@ -155,7 +155,7 @@ export const buildEvidence = (
         role: "reuse",
         form: "selector",
         name: "layoutSubviews",
-        encoding: "v@8@0:8",
+        encoding: "v16@0:8",
         callSiteSource: source("reuse selector call site"),
       },
     ],

@@ -71,6 +71,10 @@ int main() {
         assert(entry.idString != nullptr && entry.idString[0] != '\0');
         assert(entry.tag == Fnv1a32(entry.idString));
         assert(entry.visibleStateCount > 0 && entry.visibleStates != nullptr);
+        // Enum-ordinal resolution: the owning Module enum ordinal also resolves
+        // back to the record that lists this capability.
+        const ModuleEntry &owner = kModules[static_cast<std::size_t>(entry.module)];
+        assert(owner.id == entry.module);
         if (entry.eligible) {
             assert(entry.rendererFamily != nullptr &&
                    std::strcmp(entry.rendererFamily, "caml-package-setter") == 0);

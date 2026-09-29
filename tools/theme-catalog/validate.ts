@@ -227,8 +227,6 @@ const HOST_FORMS: readonly string[] = [
 
 const MODULE_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const CAPABILITY_ID_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-// Objective-C method-encoding shape (e.g. v24@0:8@16, @24@0:8).
-const METHOD_ENCODING_PATTERN = /^[a-zA-Z0-9@:^()*#]+$/;
 
 // The 21D50 renderer-family set is closed: CAML Package Setter is the only
 // eligible family. Invented family names are rejected even when accompanied by
@@ -317,6 +315,201 @@ export function expectedDisposition(
 }
 
 type Fail = (code: ValidationCode, message: string) => void;
+
+// ---- Objective-C method-encoding validation (ABI evidence shape) ----------
+//
+// A method encoding is the arm64 method_getTypeEncoding form:
+//
+//   <return-type><argument-frame-size><argument-slot>+
+//   argument-slot := <type><offset>
+//
+// e.g. v24@0:8@16 (void return; 24-byte argument frame; self id @0,
+// _cmd SEL @8, one id argument @16). A bare scalar or object token ("i",
+// "q", "@\"NSString\"") is not a method signature and never proves selector
+// ABI.
+//
+// For the exact lifecycle evidence schema the expected message shape is the
+// typed predecessor-alias shape the typed evidence records declare
+// ("void (*)(id, SEL, id)"): self is id (@0), _cmd is SEL (:8), and every
+// explicit argument is an object (id) in the next 8-byte slot. The typed
+// evidence record's selector name declares the argument shape — one explicit
+// argument per colon — so the encoding's explicit argument count must equal
+// the selector's colon count. Missing self/_cmd positions, selector/encoding
+// arity mismatches, truncated or offset/frame-inconsistent encodings, and
+// plausible-but-wrong explicit argument types (# Class, * char *, : SEL,
+// @? block, scalars, pointers, structs) all fail.
+//
+// Parser acceptance is static ABI-shape evidence only. It does NOT prove the
+// runtime ABI: that requires device-side method-signature verification (M1,
+// out of M0 scope). Direct 21D50 source binding and the typed selector/signal
+// evidence requirements are unchanged.
+
+type ParsedType = { readonly text: string; readonly next: number };
+type ParsedNumber = { readonly value: number; readonly next: number };
+
+const TYPE_QUALIFIERS = "rnNoORV";
+const SIMPLE_TYPE_CHARS = "vicslqCISLQfdBD#:*?";
+// arm64: id, SEL, and every accepted lifecycle argument occupy one 8-byte slot.
+const SLOT_SIZE = 8;
+
+function parseDigits(input: string, start: number): ParsedNumber | null {
+  let index = start;
+  while (index < input.length && input[index]! >= "0" && input[index]! <= "9") index += 1;
+  if (index === start) return null;
+  return { value: Number(input.slice(start, index)), next: index };
+}
+
+function parseObjcType(input: string, start: number): ParsedType | null {
+  let index = start;
+  while (index < input.length && TYPE_QUALIFIERS.includes(input[index]!)) index += 1;
+  if (index >= input.length) return null;
+  const typeStart = index;
+  const char = input[index]!;
+  index += 1;
+  if (char === "@") {
+    // id, block (@?), or typed object (@"NSString").
+    if (input[index] === "?") index += 1;
+    else if (input[index] === '"') {
+      index += 1;
+      const close = input.indexOf('"', index);
+      if (close < 0) return null;
+      index = close + 1;
+    }
+  } else if (char === "^") {
+    const target = parseObjcType(input, index);
+    if (target === null) return null;
+    index = target.next;
+  } else if (char === "b") {
+    const bits = parseDigits(input, index);
+    if (bits === null) return null;
+    index = bits.next;
+  } else if (char === "[") {
+    const count = parseDigits(input, index);
+    if (count === null) return null;
+    index = count.next;
+    let elements = 0;
+    while (index < input.length && input[index] !== "]") {
+      const element = parseObjcType(input, index);
+      if (element === null) return null;
+      index = element.next;
+      elements += 1;
+    }
+    if (input[index] !== "]" || elements === 0) return null;
+    index += 1;
+  } else if (char === "(" || char === "{") {
+    const close = char === "(" ? ")" : "}";
+    while (index < input.length && input[index] !== "=" && input[index] !== close) index += 1;
+    if (input[index] === "=") {
+      index += 1;
+      let members = 0;
+      while (index < input.length && input[index] !== close) {
+        const member = parseObjcType(input, index);
+        if (member === null) return null;
+        index = member.next;
+        members += 1;
+      }
+      if (members === 0) return null;
+    }
+    if (input[index] !== close) return null;
+    index += 1;
+  } else if (!SIMPLE_TYPE_CHARS.includes(char)) {
+    return null;
+  }
+  return { text: input.slice(typeStart, index), next: index };
+}
+
+export type MethodSlot = { readonly type: string; readonly offset: number };
+export type MethodEncoding = {
+  readonly returnType: string;
+  readonly frameSize: number;
+  readonly slots: readonly MethodSlot[];
+};
+
+// Parse a method encoding; null when the text is not a well-formed method
+// signature (scalar/object token, truncated text, dangling type or offset).
+export function parseMethodEncoding(encoding: string): MethodEncoding | null {
+  const returnType = parseObjcType(encoding, 0);
+  if (returnType === null) return null;
+  const frameSize = parseDigits(encoding, returnType.next);
+  if (frameSize === null) return null;
+  let index = frameSize.next;
+  const slots: MethodSlot[] = [];
+  while (index < encoding.length) {
+    const type = parseObjcType(encoding, index);
+    if (type === null) return null;
+    const offset = parseDigits(encoding, type.next);
+    if (offset === null) return null;
+    slots.push({ type: type.text, offset: offset.value });
+    index = offset.next;
+  }
+  return { returnType: returnType.text, frameSize: frameSize.value, slots };
+}
+
+// Selector grammar: `ident` (zero arguments) or `ident (:ident)* :` (one
+// explicit argument per colon). Returns the declared argument count, or null
+// when the name is not a well-formed Objective-C selector.
+export function selectorArgumentCount(name: string): number | null {
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return 0;
+  if (/^[A-Za-z_][A-Za-z0-9_]*(:[A-Za-z_][A-Za-z0-9_]*)*:$/.test(name)) {
+    let colons = 0;
+    for (const char of name) if (char === ":") colons += 1;
+    return colons;
+  }
+  return null;
+}
+
+// Validate one selector encoding against the selector name the typed evidence
+// record declares. Returns null when the encoding is valid ABI-shape evidence,
+// otherwise the reason it is not.
+export function validateSelectorEncoding(
+  encoding: string,
+  selectorName: string | null,
+): string | null {
+  const argumentCount = selectorName === null ? null : selectorArgumentCount(selectorName);
+  if (selectorName !== null && argumentCount === null) {
+    return `selector ${selectorName} is not a well-formed Objective-C selector`;
+  }
+  const parsed = parseMethodEncoding(encoding);
+  if (parsed === null) {
+    return (
+      `encoding ${encoding} is not a method signature ` +
+      `(expected <return><frame-size> then <type><offset> slots for self and _cmd)`
+    );
+  }
+  const self = parsed.slots[0];
+  const cmd = parsed.slots[1];
+  if (parsed.slots.length < 2 || self === undefined || self.type !== "@" || self.offset !== 0) {
+    return `encoding ${encoding} omits the self position (id @0)`;
+  }
+  if (cmd === undefined || cmd.type !== ":" || cmd.offset !== 8) {
+    return `encoding ${encoding} omits the _cmd position (SEL :8)`;
+  }
+  for (let slot = 0; slot < parsed.slots.length; slot += 1) {
+    if (parsed.slots[slot]!.offset !== slot * SLOT_SIZE) {
+      return `encoding ${encoding} has inconsistent argument offsets (truncated or malformed)`;
+    }
+  }
+  if (parsed.frameSize !== parsed.slots.length * SLOT_SIZE) {
+    return `encoding ${encoding} has an inconsistent argument frame size (truncated or malformed)`;
+  }
+  const explicit = parsed.slots.slice(2);
+  if (argumentCount !== null && explicit.length !== argumentCount) {
+    return (
+      `encoding ${encoding} declares ${explicit.length} explicit argument(s) ` +
+      `but selector ${String(selectorName)} has ${argumentCount} colon(s)`
+    );
+  }
+  for (let index = 0; index < explicit.length; index += 1) {
+    const slot = explicit[index]!;
+    if (slot.type !== "@") {
+      return (
+        `encoding ${encoding} argument ${index + 1} is ${slot.type}, ` +
+        `not an object (id) argument`
+      );
+    }
+  }
+  return null;
+}
 
 // Structural lifecycle-evidence gate. A record is schema-complete only when its
 // map key equals record.id; bind, close, detach, and reuse evidence is
@@ -408,13 +601,16 @@ export function validateLifecycleEvidenceRecord(
       }
       if (form === "selector") {
         const encoding = raw.encoding;
-        if (
-          !isString(encoding) ||
-          encoding.length === 0 ||
-          !METHOD_ENCODING_PATTERN.test(encoding) ||
-          isPlaceholder(encoding)
-        ) {
+        if (!isString(encoding) || encoding.length === 0 || isPlaceholder(encoding)) {
           fail("evidence", `${context} selector ${String(name)} lacks a matching method encoding`);
+        } else {
+          // ABI-shape evidence: the encoding must be a method signature whose
+          // argument shape/types match the selector the typed evidence record
+          // declares (self id @0, _cmd SEL :8, one id argument per colon).
+          const problem = validateSelectorEncoding(encoding, isString(name) ? name : null);
+          if (problem !== null) {
+            fail("evidence", `${context} selector ${String(name)} has invalid ABI evidence: ${problem}`);
+          }
         }
       } else if (form === "signal") {
         if (raw.encoding !== null) {

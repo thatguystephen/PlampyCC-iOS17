@@ -188,6 +188,11 @@ export type LifecycleSelectorEvidence = {
   readonly form: "selector" | "signal";
   readonly name: string;
   // Objective-C method encoding when form is "selector"; null when "signal".
+  // Must be an arm64 method signature (<return><frame-size> then typed argument
+  // offsets) describing the expected message shape: self id @0, _cmd SEL :8,
+  // and one id (@) argument per colon in `name` (see tools/theme-catalog/
+  // validate.ts). Parser acceptance is static ABI-shape evidence, not runtime
+  // ABI proof.
   readonly encoding: string | null;
   readonly callSiteSource: string;
 };

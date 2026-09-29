@@ -142,7 +142,7 @@ for (const capability of sidecar.capabilities) {
       { role: "bind", form: "selector", name: "setGlyphPackageDescription:", encoding: "v24@0:8@16", callSiteSource: "synthetic bind source" },
       { role: "close", form: "signal", name: "moduleWillDisappear", encoding: null, callSiteSource: "synthetic close source" },
       { role: "detach", form: "signal", name: "viewWillMoveToWindow:nil", encoding: null, callSiteSource: "synthetic detach source" },
-      { role: "reuse", form: "selector", name: "layoutSubviews", encoding: "v@8@0:8", callSiteSource: "synthetic reuse source" },
+      { role: "reuse", form: "selector", name: "layoutSubviews", encoding: "v16@0:8", callSiteSource: "synthetic reuse source" },
     ],
     facts: [
       { fact: "epoch-invalidation", statement: "invalidate epoch", source: "synthetic epoch source" },
