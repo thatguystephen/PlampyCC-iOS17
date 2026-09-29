@@ -2,43 +2,57 @@
 // canonical seed (30 Module records / 32 capability records) field-for-field.
 // The issue appendix, its two digests, and this parity test are the immutable
 // input reference (see manifest/theme-manifest.ts).
-//
-// @ts-nocheck
+
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
-const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
-const seedBytes = readFileSync(join(root, "manifest", "21d50-canonical-manifest-seed.json"), "utf8");
-const seed = JSON.parse(seedBytes);
+import { modules, capabilities, target, seed } from "../manifest/theme-manifest.ts";
+import { expectedDisposition } from "../tools/theme-catalog/validate.ts";
 
-const { modules, capabilities, manifest, target, seed: seedRef } = await import(
-  join(root, "manifest", "theme-manifest.ts")
-);
-const { expectedDisposition } = await import(
-  join(root, "tools", "theme-catalog", "validate.ts")
+const seedBytes = readFileSync(
+  new URL("../manifest/21d50-canonical-manifest-seed.json", import.meta.url),
+  "utf8",
 );
 
-const fail = (message) => {
+type SeedCapability = {
+  disposition: string;
+  names: string[];
+  asset_paths: string[];
+  evidence_type: string;
+};
+type SeedModule = {
+  identity: string;
+  renderer_evidence_status: string;
+  capabilities: SeedCapability[];
+};
+type Seed = {
+  source_sha256: string;
+  target: { device: string; os_version: string; build: string };
+  modules: SeedModule[];
+};
+
+const seedData: Seed = JSON.parse(seedBytes);
+
+const fail = (message: string): never => {
   throw new Error(message);
 };
-const assert = (condition, message) => {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) fail(message);
-};
-const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+}
+const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
 
 // ---- immutable digests ----
 const SEED_SHA256 = "63252e96ade77361484a75eade500bc7a653965ead644f11eaffe02cc2a7ef99";
 const SOURCE_SHA256 = "d1d990e14cbbb683cfd5a42a924ec1839303e1cc4499bf0c976e89c9aabd9919";
 assert(sha256(seedBytes) === SEED_SHA256, `seed SHA-256 drifted: ${sha256(seedBytes)}`);
-assert(seed.source_sha256 === SOURCE_SHA256, "seed source_sha256 drifted");
-assert(seedRef.sha256 === SEED_SHA256, "manifest seed.sha256 does not match the input reference");
-assert(seedRef.sourceSha256 === SOURCE_SHA256, "manifest seed.sourceSha256 does not match the input reference");
+assert(seedData.source_sha256 === SOURCE_SHA256, "seed source_sha256 drifted");
+assert(seed.sha256 === SEED_SHA256, "manifest seed.sha256 does not match the input reference");
+assert(seed.sourceSha256 === SOURCE_SHA256, "manifest seed.sourceSha256 does not match the input reference");
 
 // ---- seed target / manifest target ----
-assert(seed.target.device === "iPhone15,2", "seed device mismatch");
-assert(seed.target.os_version === "iOS 17.3", "seed os_version mismatch");
-assert(seed.target.build === "21D50", "seed build mismatch");
+assert(seedData.target.device === "iPhone15,2", "seed device mismatch");
+assert(seedData.target.os_version === "iOS 17.3", "seed os_version mismatch");
+assert(seedData.target.build === "21D50", "seed build mismatch");
 assert(
   target.productType === "iPhone15,2" &&
     target.productVersion === "17.3" &&
@@ -47,23 +61,23 @@ assert(
 );
 
 // ---- cardinality ----
-assert(seed.modules.length === 30, `seed has ${seed.modules.length} modules, expected 30`);
+assert(seedData.modules.length === 30, `seed has ${seedData.modules.length} modules, expected 30`);
 assert(
-  seed.modules.reduce((sum, module) => sum + module.capabilities.length, 0) === 32,
+  seedData.modules.reduce((sum, module) => sum + module.capabilities.length, 0) === 32,
   "seed capability total is not 32",
 );
 assert(modules.length === 30, "manifest Module records not 30");
 assert(capabilities.length === 32, "manifest Capability records not 32");
 
 // ---- per-seed-module parity ----
-const moduleById = new Map(modules.map((module) => [module.id, module]));
-const capabilityByKey = new Map(
+const moduleById = new Map<string, (typeof modules)[number]>(modules.map((module) => [module.id, module]));
+const capabilityByKey = new Map<string, (typeof capabilities)[number]>(
   capabilities.map((capability) => [`${capability.module}#${capability.localIndex}`, capability]),
 );
 
-for (const seedModule of seed.modules) {
+for (const seedModule of seedData.modules) {
   const record = moduleById.get(seedModule.identity);
-  assert(record, `module omitted from manifest: ${seedModule.identity}`);
+  assert(record !== undefined, `module omitted from manifest: ${seedModule.identity}`);
   assert(record.safeDefault === "stock", `module ${record.id} stock default not preserved`);
   assert(
     record.seedRendererEvidenceStatus === seedModule.renderer_evidence_status,
@@ -75,7 +89,7 @@ for (const seedModule of seed.modules) {
   );
   seedModule.capabilities.forEach((seedCapability, local) => {
     const capability = capabilityByKey.get(`${seedModule.identity}#${local}`);
-    assert(capability, `capability omitted: ${seedModule.identity}#${local}`);
+    assert(capability !== undefined, `capability omitted: ${seedModule.identity}#${local}`);
     assert(
       capability.seedDisposition === seedCapability.disposition,
       `capability ${capability.id} disposition not preserved (${capability.seedDisposition} != ${seedCapability.disposition})`,
@@ -129,7 +143,7 @@ assert(
 );
 
 // ---- stock-only disposition classes present in the catalog ----
-const classes = new Set(capabilities.map((capability) => capability.disposition));
+const classes = new Set<string>(capabilities.map((capability) => capability.disposition));
 for (const disposition of [
   "eligible",
   "stock-only-opaque",

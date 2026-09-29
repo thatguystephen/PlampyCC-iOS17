@@ -20,7 +20,7 @@ jobs:
       - name: Setup Bun # oven-sh/setup-bun v2.0.2
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
         with:
-          bun-version: 1.2.20
+          bun-version: 1.4.2
       - name: Verify Apple Silicon runner and toolchain
         shell: bash
         run: |
@@ -65,6 +65,8 @@ jobs:
           python3 -B tests/prefs-arc-contract.py
           python3 -B tests/caml-diagnostic-contract.py
           python3 -B tests/glyph-trace-contract.py
+          bun install --frozen-lockfile
+          ./node_modules/.bin/tsc --noEmit
           bun tests/theme-manifest-parity.ts
           bun tests/theme-catalog-generation.ts
           bun tests/theme-catalog-validation.ts

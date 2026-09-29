@@ -1,35 +1,54 @@
 // Validation gate: every generation-failure mode from the M0 acceptance
-// contract, plus the stage-shape rules and the existing-family extension
-// fixture. Each invalid fixture must fail generation with its expected error
-// code; the two positive fixtures (evidence-complete activation, existing
-// family extension) must succeed.
-//
-// @ts-nocheck
+// contract, the stage-shape rules, the structural lifecycle-evidence gates,
+// the closed renderer-family set, duplicate ownership membership, string
+// safety, and the existing-family extension fixture (which now compiles AND
+// runs the extended generated header). Each invalid fixture must fail
+// generation with its expected error code; the positive fixtures (disambiguated
+// alias collision, complete direct-21d50 activation, existing-family extension)
+// must succeed.
+
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
-const { manifest } = await import(join(root, "manifest", "theme-manifest.ts"));
-const { validateManifest, CONTRACT_21D50 } = await import(
-  join(root, "tools", "theme-catalog", "validate.ts")
-);
-const { renderCatalog } = await import(join(root, "tools", "theme-catalog", "generate.ts"));
+import { manifest } from "../manifest/theme-manifest.ts";
+import {
+  CONTRACT_21D50,
+  validateManifest,
+  type CensusContract,
+  type ValidationCode,
+  type ValidationResult,
+} from "../tools/theme-catalog/validate.ts";
+import { renderCatalog } from "../tools/theme-catalog/generate.ts";
+import {
+  buildEvidence,
+  byCapability,
+  byModule,
+  cloneManifest,
+  type MutableManifest,
+} from "./theme-manifest-fixtures.ts";
 
-const fail = (message) => {
+const root = fileURLToPath(new URL("../", import.meta.url));
+
+const fail = (message: string): never => {
   throw new Error(message);
 };
-const assert = (condition, message) => {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) fail(message);
-};
+}
 
-const clone = () => JSON.parse(JSON.stringify(manifest));
-const validAssetExists = () => true;
-const EXT_ASSET = "layout/Library/Application Support/PlampyCC/Plampy/Assets/FixtureExtraModule.bundle/FixtureExtra.ca/main.caml";
+const validAssetExists = (): boolean => true;
+const EXT_ASSET =
+  "layout/Library/Application Support/PlampyCC/Plampy/Assets/FixtureExtraModule.bundle/FixtureExtra.ca/main.caml";
 
-function validate(mutate, options = {}) {
-  const copy = clone();
+function validate(
+  mutate: (copy: MutableManifest) => void,
+  options: { assetExists?: (path: string) => boolean } = {},
+): ValidationResult {
+  const copy = cloneManifest();
   mutate(copy);
   return validateManifest(copy, {
     contract: CONTRACT_21D50,
@@ -38,7 +57,11 @@ function validate(mutate, options = {}) {
   });
 }
 
-function expect(code, mutate, options = {}) {
+function expect(
+  code: ValidationCode,
+  mutate: (copy: MutableManifest) => void,
+  options: { assetExists?: (path: string) => boolean } = {},
+): void {
   const result = validate(mutate, options);
   assert(!result.ok, `fixture should fail: [${code}]`);
   assert(
@@ -47,34 +70,6 @@ function expect(code, mutate, options = {}) {
   );
 }
 
-function byCapability(copy, id) {
-  return copy.capabilities.find((capability) => capability.id === id);
-}
-function byModule(copy, id) {
-  return copy.modules.find((module) => module.id === id);
-}
-
-const COMPLETE_EVIDENCE = (id = "low-power", module = "LowPowerModule") => ({
-  id: `evidence:${id}`,
-  module,
-  capability: id,
-  ownerClass: "owner",
-  hostClass: module,
-  bindSelector: "bind",
-  closeSignal: "close",
-  detachSignal: "detach",
-  reuseSignal: "reuse",
-  selectorEncodings: { "setGlyphPackageDescription:": "v24@0:8@16" },
-  callSiteSources: ["21D50-call-site"],
-  epochInvalidation: "invalidate-epoch",
-  producerTagPath: "TagProducer",
-  stockCapturePath: "CaptureStock",
-  newerStockAdoptionPath: "AdoptNewer",
-  restorationPath: "Restore",
-  teardownPath: "TearDown",
-  missingFactCondition: "missing-fact -> ForwardStock",
-});
-
 // ---- counts ----
 expect("count", (copy) => copy.modules.pop()); // 29 modules
 expect("count", (copy) => copy.capabilities.push(byCapability(copy, "alarm"))); // 33 caps
@@ -82,7 +77,18 @@ expect("count", (copy) => {
   const alarm = byCapability(copy, "alarm");
   alarm.disposition = "eligible";
   alarm.rendererFamily = "caml-package-setter";
-  alarm.plampyRecipe = { packages: [{ packageName: "Alarm", bundleDir: "AlarmModule.bundle", requiredAsset: "layout/Library/Application Support/PlampyCC/Plampy/Assets/AlarmModule.bundle/Alarm.ca/main.caml" }] };
+  alarm.hostForm = "button-host";
+  alarm.seedDisposition = "verified_asset_candidate";
+  alarm.seedEvidenceType = "animated_caml";
+  alarm.plampyRecipe = {
+    packages: [
+      {
+        packageName: "Alarm",
+        bundleDir: "AlarmModule.bundle",
+        requiredAsset: "layout/Library/Application Support/PlampyCC/Plampy/Assets/AlarmModule.bundle/Alarm.ca/main.caml",
+      },
+    ],
+  };
   alarm.stockAliases = ["Alarm"];
 }); // 14 eligible
 expect("count", (copy) => {
@@ -113,8 +119,23 @@ expect("ownership", (copy) => {
   byCapability(copy, "alarm").localIndex = 5; // index gap vs module position
 });
 expect("ownership", (copy) => {
-  const alarmModule = byModule(copy, "AlarmModule");
-  alarmModule.capabilities = []; // module no longer lists its capability
+  byModule(copy, "AlarmModule").capabilities = []; // module no longer lists its capability
+});
+// Duplicate membership: the same capability in one module's list more than once.
+expect("ownership", (copy) => {
+  byModule(copy, "AlarmModule").capabilities = ["alarm", "alarm"];
+});
+// Duplicate ownership across module lists: one capability in two modules.
+expect("ownership", (copy) => {
+  byModule(copy, "WalletModule").capabilities.push("alarm");
+});
+// Malformed module record: capability list is not an array.
+expect("ownership", (copy) => {
+  (byModule(copy, "AlarmModule") as { capabilities: unknown }).capabilities = "alarm";
+});
+// Malformed module record: safe default is not preserved as stock.
+expect("id", (copy) => {
+  byModule(copy, "AlarmModule").safeDefault = "theme";
 });
 
 // ---- dispositions ----
@@ -122,11 +143,10 @@ expect("disposition", (copy) => {
   byCapability(copy, "alarm").disposition = "eligible-ish"; // unknown value
 });
 expect("disposition", (copy) => {
-  delete byCapability(copy, "alarm").disposition; // implicit/missing default
+  delete (byCapability(copy, "alarm") as { disposition?: string }).disposition; // implicit/missing default
 });
 expect("disposition", (copy) => {
-  const caps = byCapability(copy, "airplay-mirroring");
-  caps.plampyRecipe = null; // eligible without recipe
+  byCapability(copy, "airplay-mirroring").plampyRecipe = null; // eligible without recipe
 });
 expect("disposition", (copy) => {
   byCapability(copy, "alarm").plampyRecipe = {
@@ -151,7 +171,39 @@ expect("family", (copy) => {
   byCapability(copy, "alarm").rendererFamily = "caml-package-setter"; // stock-only names family
 });
 expect("family", (copy) => {
-  copy.rendererFamilyAdapters[0].seams[0].encoding = ""; // untyped seam
+  copy.rendererFamilyAdapters[0]!.seams[0]!.encoding = ""; // untyped seam
+});
+// Invented family name rejected even when accompanied by an adapter declaration.
+expect("family", (copy) => {
+  copy.rendererFamilyAdapters.push({
+    family: "static-glyph-setter",
+    adapter: "FooAdapter",
+    seams: [
+      { name: "x", ownerClass: "A", selector: "b:", encoding: "v24@0:8@16", predecessorType: "void (*)(id, SEL, id)" },
+    ],
+  });
+});
+// Duplicate adapter-family declaration.
+expect("family", (copy) => {
+  copy.rendererFamilyAdapters.push({ ...copy.rendererFamilyAdapters[0]! });
+});
+// Not the exact typed CAML adapter.
+expect("family", (copy) => {
+  copy.rendererFamilyAdapters[0]!.adapter = "OtherAdapter";
+});
+// Not the exact typed CAML seam declaration (changed encoding).
+expect("family", (copy) => {
+  copy.rendererFamilyAdapters[0]!.seams[0]!.encoding = "v32@0:8@16";
+});
+// Extra seam inflates the closed seam set.
+expect("family", (copy) => {
+  copy.rendererFamilyAdapters[0]!.seams.push({
+    name: "extra-seam",
+    ownerClass: "CCUISomething",
+    selector: "setExtra:",
+    encoding: "v24@0:8@16",
+    predecessorType: "void (*)(id, SEL, id)",
+  });
 });
 
 // ---- aliases ----
@@ -179,18 +231,29 @@ expect("alias", (copy) => {
   assert(result.ok, `disambiguated alias collision should validate: ${JSON.stringify(result.errors)}`);
 }
 
+// ---- string safety (newlines/control characters rejected before embedding) ----
+expect("string", (copy) => {
+  byCapability(copy, "airplay-mirroring").stockAliases.push("bad\nname");
+});
+expect("string", (copy) => {
+  byCapability(copy, "alarm").deviceVector.visibleStates.push("x\u0001y");
+});
+
 // ---- assets ----
 expect("asset", (copy) => {
-  byCapability(copy, "airplay-mirroring").plampyRecipe.packages[0].requiredAsset =
+  byCapability(copy, "airplay-mirroring").plampyRecipe!.packages[0]!.requiredAsset =
     "layout/Application Support/PlampyCC/Plampy/Assets/AirPlayMirroringModule.bundle/MPAVScreenMirroring.ca/main.caml";
 });
 expect(
   "asset",
   (copy) => {
-    byCapability(copy, "airplay-mirroring").plampyRecipe.packages[0].requiredAsset =
+    byCapability(copy, "airplay-mirroring").plampyRecipe!.packages[0]!.requiredAsset =
       "layout/Library/Application Support/PlampyCC/Plampy/Assets/AirPlayMirroringModule.bundle/MPAVScreenMirroring.ca/main.caml";
   },
-  { assetExists: (path) => path !== "layout/Library/Application Support/PlampyCC/Plampy/Assets/AirPlayMirroringModule.bundle/MPAVScreenMirroring.ca/main.caml" },
+  {
+    assetExists: (path) =>
+      path !== "layout/Library/Application Support/PlampyCC/Plampy/Assets/AirPlayMirroringModule.bundle/MPAVScreenMirroring.ca/main.caml",
+  },
 );
 
 // ---- target / seed ----
@@ -208,7 +271,7 @@ expect("stage-name", (copy) => {
 expect("stage-duplicate", (copy) => {
   copy.selectedStage = {
     name: "A3",
-    activeCapabilities: [...CONTRACT_21D50.eligibleIds.slice(0, -1), CONTRACT_21D50.eligibleIds[0]],
+    activeCapabilities: [...CONTRACT_21D50.eligibleIds.slice(0, -1), CONTRACT_21D50.eligibleIds[0]!],
   };
 });
 expect("stage-shape", (copy) => {
@@ -242,46 +305,105 @@ expect("stage-shape", (copy) => {
   };
 });
 expect("selected-stage", (copy) => {
-  copy.selectedStage = undefined;
+  (copy as { selectedStage?: unknown }).selectedStage = undefined;
 });
 
-// ---- lifecycle evidence gates ----
+// ---- structural lifecycle evidence gates ----
 expect("evidence", (copy) => {
   byCapability(copy, "low-power").lifecycleEvidence = "evidence:does-not-exist"; // dangling
 });
 expect("evidence", (copy) => {
   copy.selectedStage = { name: "A1", activeCapabilities: ["low-power"] }; // eligible but no evidence -> inactive
 });
+// Synthetic evidence proves schema shape but can never close activation.
 expect("evidence", (copy) => {
-  copy.lifecycleEvidenceRecords["evidence:low-power"] = {
-    ...COMPLETE_EVIDENCE(),
-    bindSelector: "", // incomplete record
-  };
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = buildEvidence("low-power", "LowPowerModule", "synthetic-fixture");
   byCapability(copy, "low-power").lifecycleEvidence = "evidence:low-power";
   copy.selectedStage = { name: "A1", activeCapabilities: ["low-power"] };
 });
+// Map key must equal record.id.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+  record.id = "evidence:other";
+});
+// Unknown evidence kind.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  record.evidenceKind = "maybe";
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
+// A lifecycle role is unrepresented.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  record.selectors = record.selectors.filter((selector) => selector.role !== "close");
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
+// A lifecycle role is duplicated.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  record.selectors[1]!.role = "bind";
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
+// A named selector lacks a matching encoding.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  const bind = record.selectors.find((selector) => selector.role === "bind");
+  assert(bind !== undefined, "bind selector missing from fixture");
+  bind.encoding = null;
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
+// Direct evidence whose source is not explicitly bound to 21D50.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  record.selectors[0]!.callSiteSource = "somewhere else";
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
+// Synthetic evidence claiming a direct 21D50 source.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule", "synthetic-fixture");
+  record.selectors[0]!.callSiteSource = "21D50 leaked source";
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
+// Placeholder-only fact statement.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  record.facts[0]!.statement = "TODO";
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
+// A required Issue #9 fact is missing.
+expect("evidence", (copy) => {
+  const record = buildEvidence("low-power", "LowPowerModule");
+  record.facts = record.facts.filter((fact) => fact.fact !== "teardown");
+  copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
+});
 {
-  // positive: complete direct evidence closes A1 (activation independent of
-  // catalog eligibility; evidence is required only at activation).
+  // positive: complete direct-21d50 evidence closes A2 (activation independent
+  // of catalog eligibility; evidence is required only at activation).
   const result = validate((copy) => {
-    copy.lifecycleEvidenceRecords["evidence:low-power"] = COMPLETE_EVIDENCE();
-    byCapability(copy, "low-power").lifecycleEvidence = "evidence:low-power";
-    copy.selectedStage = { name: "A2", activeCapabilities: ["low-power", "display-brightness", "media-controls-volume", "mute"] };
-    copy.lifecycleEvidenceRecords["evidence:mute"] = COMPLETE_EVIDENCE("mute", "MuteModule");
-    copy.lifecycleEvidenceRecords["evidence:display-brightness"] = COMPLETE_EVIDENCE("display-brightness", "DisplayModule");
-    copy.lifecycleEvidenceRecords["evidence:media-controls-volume"] = COMPLETE_EVIDENCE("media-controls-volume", "MediaControls");
-    byCapability(copy, "mute").lifecycleEvidence = "evidence:mute";
-    byCapability(copy, "display-brightness").lifecycleEvidence = "evidence:display-brightness";
-    byCapability(copy, "media-controls-volume").lifecycleEvidence = "evidence:media-controls-volume";
+    for (const [capabilityId, moduleId] of [
+      ["low-power", "LowPowerModule"],
+      ["display-brightness", "DisplayModule"],
+      ["media-controls-volume", "MediaControls"],
+      ["mute", "MuteModule"],
+    ] as const) {
+      copy.lifecycleEvidenceRecords[`evidence:${capabilityId}`] = buildEvidence(capabilityId, moduleId);
+      byCapability(copy, capabilityId).lifecycleEvidence = `evidence:${capabilityId}`;
+    }
+    copy.selectedStage = {
+      name: "A2",
+      activeCapabilities: ["low-power", "display-brightness", "media-controls-volume", "mute"],
+    };
   });
-  assert(result.ok, `complete-evidence A2 should validate: ${JSON.stringify(result.errors)}`);
+  assert(result.ok, `complete direct evidence A2 should validate: ${JSON.stringify(result.errors)}`);
 }
 
 // ---- existing-family extension fixture ----
 // Adding a proved existing-family module changes manifest/asset/generated
-// inputs only; hook sources are never edited.
+// inputs only; hook sources are never edited. The rendered extended header is
+// compiled AND run, not merely string-compared.
 {
-  const extContract = {
+  const extContract: CensusContract = {
     target: CONTRACT_21D50.target,
     moduleIds: [...CONTRACT_21D50.moduleIds, "FixtureExtraModule"],
     capabilityIds: [...CONTRACT_21D50.capabilityIds, "fixture-extra"],
@@ -289,7 +411,7 @@ expect("evidence", (copy) => {
     seedSha256: CONTRACT_21D50.seedSha256,
     sourceSha256: CONTRACT_21D50.sourceSha256,
   };
-  const ext = clone();
+  const ext = cloneManifest();
   ext.modules.push({
     id: "FixtureExtraModule",
     safeDefault: "stock",
@@ -315,7 +437,11 @@ expect("evidence", (copy) => {
     lifecycleEvidence: "evidence:fixture-extra",
     deviceVector: { visibleStates: ["off", "on"], presentations: ["compact"] },
   });
-  ext.lifecycleEvidenceRecords["evidence:fixture-extra"] = COMPLETE_EVIDENCE("fixture-extra", "FixtureExtraModule");
+  ext.lifecycleEvidenceRecords["evidence:fixture-extra"] = buildEvidence(
+    "fixture-extra",
+    "FixtureExtraModule",
+    "synthetic-fixture",
+  );
 
   // The extended manifest fails the closed 21D50 census contract.
   const closedResult = validateManifest(ext, {
@@ -327,7 +453,7 @@ expect("evidence", (copy) => {
   // Hash the hook sources so we can prove the extension never edits them.
   const hookSourceDir = join(root, "src");
   const hookSources = readdirSync(hookSourceDir)
-    .filter((name) => name.endsWith(".xm") || name.endsWith(".mm") || name.endsWith(".hpp") || name.endsWith(".h"))
+    .filter((name) => /\.(xm|mm|hpp|h)$/.test(name))
     .filter((name) => name !== "PlampyCCThemeCatalog.hpp"); // generated output, not hook source
   const hookHash = () =>
     createHash("sha256")
@@ -343,17 +469,46 @@ expect("evidence", (copy) => {
   assert(rendered.json !== checked.json, "extension must change generated JSON");
   assert(hookHash() === before, "extension changed hook source");
 
-  // Write the extended generated output to a scratch directory (never into the
-  // repository) to prove the write side of the extension path.
+  // Compile AND run the extended rendered header (31 modules / 33 capabilities /
+  // 14 eligible), proving the corrected emission compiles for any validated
+  // census — the false-positive acceptance path this rework repairs.
+  const compiler = ["g++", "c++"].find((candidate) => {
+    const probe = spawnSync(candidate, ["--version"], { encoding: "utf8" });
+    return probe.status === 0;
+  });
+  assert(compiler !== undefined, "no C++ compiler available (g++/c++)");
   const scratch = mkdtempSync(join(tmpdir(), "plampycc-ext-"));
   try {
     writeFileSync(join(scratch, "PlampyCCThemeCatalog.hpp"), rendered.header);
     writeFileSync(join(scratch, "PlampyCCThemeCatalog.json"), rendered.json);
+    const binary = join(scratch, "native-theme-catalog-extension");
+    const compile = spawnSync(
+      compiler,
+      [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        `-I${scratch}`,
+        "-DEXPECT_MODULE_COUNT=31",
+        "-DEXPECT_CAPABILITY_COUNT=33",
+        "-DEXPECT_ELIGIBLE_COUNT=14",
+        "-DEXPECT_ACTIVE_BITS=0",
+        "tests/native-theme-catalog-extension.cpp",
+        "-o",
+        binary,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert(compile.status === 0, `extended native catalog compile failed:\n${compile.stderr}`);
+    const run = spawnSync(binary, [], { encoding: "utf8" });
+    assert(run.status === 0, `extended native catalog run failed:\n${run.stderr}`);
+    assert(run.stdout.includes("PASS"), "extended native catalog did not print its PASS line");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
 }
 
 console.log(
-  "PASS: validation (invalid counts, IDs, ownership, dispositions, aliases, assets, family adapters, target metadata, stage names, duplicate active IDs, and wrong stage shapes all fail generation; complete 21D50 lifecycle evidence closes activation; existing-family extension changes only manifest/asset/generated inputs)",
+  "PASS: validation (invalid counts, IDs, ownership/membership, malformed module records, dispositions, aliases, assets, invented/duplicate adapter families, non-exact seams, target metadata, stage names, duplicate active IDs, wrong stage shapes, structural lifecycle-evidence mismatches, placeholder-only records, and control-character strings all fail generation; complete direct-21d50 evidence closes activation; existing-family extension compiles and runs the extended header without hook-source edits)",
 );

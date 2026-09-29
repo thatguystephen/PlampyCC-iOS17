@@ -22,7 +22,7 @@
     "activeCapabilities": []
   },
   "activationBitset": "0x0000",
-  "catalogDigest": "sha256:3db46a408050e5ebe049e5b5c47fc88e3238839f54ac36d71e78cb4fd20d1e86",
+  "catalogDigest": "sha256:691ff044780e4981a14009b9a88cf27c4711564b89ad42d09853d3ca515bc74c",
   "activationSetDigest": "sha256:981d0756069a210c9202d3737c61ee1759da73b0a2890b8fed0f8b7ec9efedc3",
   "stageCardinality": {
     "Q0": 0,
@@ -1388,5 +1388,35 @@
         ]
       }
     }
-  ]
+  ],
+  "rendererFamilyAdapters": [
+    {
+      "family": "caml-package-setter",
+      "adapter": "CAMLAdapter",
+      "seams": [
+        {
+          "name": "button-package",
+          "ownerClass": "CCUIButtonModuleView",
+          "selector": "setGlyphPackageDescription:",
+          "encoding": "v24@0:8@16",
+          "predecessorType": "void (*)(id, SEL, id)"
+        },
+        {
+          "name": "round-package",
+          "ownerClass": "CCUIRoundButton",
+          "selector": "setGlyphPackageDescription:",
+          "encoding": "v24@0:8@16",
+          "predecessorType": "void (*)(id, SEL, id)"
+        },
+        {
+          "name": "slider-package",
+          "ownerClass": "CCUIBaseSliderView",
+          "selector": "setGlyphPackageDescription:",
+          "encoding": "v24@0:8@16",
+          "predecessorType": "void (*)(id, SEL, id)"
+        }
+      ]
+    }
+  ],
+  "lifecycleEvidence": {}
 }

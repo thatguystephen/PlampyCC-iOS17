@@ -170,29 +170,73 @@ export type ModuleRecord = {
   readonly capabilities: readonly CapabilityId[];
 };
 
-// Direct 21D50 lifecycle evidence record. Not parsed by SpringBoard; inputs to
-// generation and review only. A record is complete only when every field names
-// a direct 21D50 fact (see tools/theme-catalog/validate.ts).
+// Lifecycle evidence. Not parsed by SpringBoard; inputs to generation and
+// review only. Each record couples every lifecycle selector/signal to its form,
+// method encoding, and call-site source, and every Issue #9 lifecycle fact to
+// its statement and source (structural gate: tools/theme-catalog/validate.ts).
+//
+// `evidenceKind` is a hard boundary. "direct-21d50" records bind every source
+// explicitly to build 21D50 and are the only records that may close activation.
+// "synthetic-fixture" records prove schema shape in host tests and must never
+// claim direct 21D50 evidence or enter an activation set.
+export type EvidenceKind = "direct-21d50" | "synthetic-fixture";
+
+export type LifecycleRole = "bind" | "close" | "detach" | "reuse";
+
+export type LifecycleSelectorEvidence = {
+  readonly role: LifecycleRole;
+  readonly form: "selector" | "signal";
+  readonly name: string;
+  // Objective-C method encoding when form is "selector"; null when "signal".
+  readonly encoding: string | null;
+  readonly callSiteSource: string;
+};
+
+export type LifecycleFact =
+  | "epoch-invalidation"
+  | "producer-tag"
+  | "stock-capture"
+  | "newer-stock-adoption"
+  | "restoration"
+  | "teardown"
+  | "missing-fact-fail-open";
+
+export type LifecycleFactEvidence = {
+  readonly fact: LifecycleFact;
+  readonly statement: string;
+  readonly source: string;
+};
+
 export type LifecycleEvidenceRecord = {
   readonly id: LifecycleEvidenceId;
   readonly module: ModuleId;
   readonly capability: CapabilityId;
+  readonly evidenceKind: EvidenceKind;
   readonly ownerClass: string;
   readonly hostClass: string;
-  readonly bindSelector: string;
-  readonly closeSignal: string;
-  readonly detachSignal: string;
-  readonly reuseSignal: string;
-  readonly selectorEncodings: Readonly<Record<string, string>>;
-  readonly callSiteSources: readonly string[];
-  readonly epochInvalidation: string;
-  readonly producerTagPath: string;
-  readonly stockCapturePath: string;
-  readonly newerStockAdoptionPath: string;
-  readonly restorationPath: string;
-  readonly teardownPath: string;
-  readonly missingFactCondition: string;
+  // Exactly one entry per LifecycleRole (bind, close, detach, reuse).
+  readonly selectors: readonly LifecycleSelectorEvidence[];
+  // Exactly one entry per LifecycleFact.
+  readonly facts: readonly LifecycleFactEvidence[];
 };
+
+// Closed vocabularies of the evidence schema (data, not discovery logic).
+export const LIFECYCLE_ROLES: readonly LifecycleRole[] = [
+  "bind",
+  "close",
+  "detach",
+  "reuse",
+];
+
+export const LIFECYCLE_FACTS: readonly LifecycleFact[] = [
+  "epoch-invalidation",
+  "producer-tag",
+  "stock-capture",
+  "newer-stock-adoption",
+  "restoration",
+  "teardown",
+  "missing-fact-fail-open",
+];
 
 export type StageActivation = {
   readonly name: StageName;
@@ -1125,6 +1169,28 @@ export type ThemeManifest = {
   readonly lifecycleEvidenceRecords: Readonly<Record<LifecycleEvidenceId, LifecycleEvidenceRecord>>;
   readonly selectedStage: StageActivation;
 };
+
+// Widened structural views of the manifest records. The canonical manifest
+// below satisfies them exactly (every literal union widens to string, every
+// readonly array stays readonly). Validators, generators, and typed test
+// fixtures operate on these shapes — no unchecked `as unknown as ThemeManifest`
+// cast exists anywhere in the toolchain.
+type Widen<T> = T extends string
+  ? string
+  : T extends readonly (infer U)[]
+    ? readonly Widen<U>[]
+    : T extends object
+      ? { readonly [K in keyof T]: Widen<T[K]> }
+      : T;
+
+export type ManifestData = Widen<ThemeManifest>;
+export type ModuleData = Widen<ModuleRecord>;
+export type CapabilityData = Widen<CapabilityRecord>;
+export type LifecycleEvidenceData = Widen<LifecycleEvidenceRecord>;
+export type LifecycleSelectorData = Widen<LifecycleSelectorEvidence>;
+export type LifecycleFactData = Widen<LifecycleFactEvidence>;
+export type RendererFamilyAdapterData = Widen<RendererFamilyAdapter>;
+export type StageActivationData = Widen<StageActivation>;
 
 export const manifest: ThemeManifest = {
   schema: "plampycc-theme-manifest/v1",

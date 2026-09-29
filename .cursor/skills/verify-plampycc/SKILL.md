@@ -48,6 +48,8 @@ python3 -B tests/glyph-trace-contract.py
 python3 -B tests/flashlight-optical-contract.py
 python3 -B tests/flashlight-asset-contract.py
 python3 -B tests/prefs-arc-contract.py
+bun install --frozen-lockfile
+./node_modules/.bin/tsc --noEmit
 bun tests/static-check.ts
 bun tests/theme-manifest-parity.ts
 bun tests/theme-catalog-generation.ts
@@ -56,7 +58,7 @@ bun tools/theme-catalog/generate.ts --check
 bun /home/steph/.hermes/skills/software-development/theos-package-build/scripts/inspect-project.ts . --json
 ```
 
-Healthy when: all sixteen gate commands exit 0 and their PASS lines are captured; `inspect-project.ts` reports no violations beyond the documented baseline below (warnings do not block); `git status --porcelain` shows exactly the intended diff — a working tree that differs from the change under review invalidates the run.
+Healthy when: all eighteen gate commands exit 0 and their PASS lines are captured (`bun install --frozen-lockfile` is a prerequisite, not a gate); `inspect-project.ts` reports no violations beyond the documented baseline below (warnings do not block); `git status --porcelain` shows exactly the intended diff — a working tree that differs from the change under review invalidates the run.
 
 Known inspector baseline (heuristic false positives of `inspect-project.ts`'s rootful-path scan against this repo's pinned contract; any other violation is a real finding):
 

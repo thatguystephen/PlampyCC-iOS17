@@ -23,7 +23,7 @@ inline constexpr char kTargetProductType[] = "iPhone15,2";
 inline constexpr char kTargetProductVersion[] = "17.3";
 inline constexpr char kTargetBuild[] = "21D50";
 inline constexpr char kSelectedStage[] = "Q0";
-inline constexpr char kCatalogDigest[] = "sha256:3db46a408050e5ebe049e5b5c47fc88e3238839f54ac36d71e78cb4fd20d1e86";
+inline constexpr char kCatalogDigest[] = "sha256:691ff044780e4981a14009b9a88cf27c4711564b89ad42d09853d3ca515bc74c";
 inline constexpr char kActivationSetDigest[] = "sha256:981d0756069a210c9202d3737c61ee1759da73b0a2890b8fed0f8b7ec9efedc3";
 inline constexpr std::uint32_t kActiveCapabilityBits = 0x00000000u;
 inline constexpr std::size_t kModuleCount = 30;
@@ -116,6 +116,81 @@ struct PackageRoute {
   const char *packageName;
   const char *bundleDir;
 };
+
+// Immutable Module record: identity, safe default, and explicit capability
+// ownership as an immutable range (pointer + count over constexpr data).
+struct ModuleEntry {
+  ModuleId id;
+  const char *idString;
+  const char *safeDefault;
+  const CapabilityId *capabilities;
+  std::size_t capabilityCount;
+};
+
+inline constexpr CapabilityId kModuleCapabilities_0[] = {CapabilityId::AccessibilityGuidedAccess};
+inline constexpr CapabilityId kModuleCapabilities_1[] = {CapabilityId::AccessibilityShortcuts};
+inline constexpr CapabilityId kModuleCapabilities_2[] = {CapabilityId::AccessibilitySoundDetection};
+inline constexpr CapabilityId kModuleCapabilities_3[] = {CapabilityId::AccessibilityTextSize};
+inline constexpr CapabilityId kModuleCapabilities_4[] = {CapabilityId::AirplayMirroring};
+inline constexpr CapabilityId kModuleCapabilities_5[] = {CapabilityId::Alarm};
+inline constexpr CapabilityId kModuleCapabilities_6[] = {CapabilityId::Appearance};
+inline constexpr CapabilityId kModuleCapabilities_7[] = {CapabilityId::Calculator};
+inline constexpr CapabilityId kModuleCapabilities_8[] = {CapabilityId::Camera};
+inline constexpr CapabilityId kModuleCapabilities_9[] = {CapabilityId::ConnectivityCaml, CapabilityId::ConnectivityGlyphs};
+inline constexpr CapabilityId kModuleCapabilities_10[] = {CapabilityId::DisplayBrightness, CapabilityId::DisplayCatalog};
+inline constexpr CapabilityId kModuleCapabilities_11[] = {CapabilityId::Flashlight};
+inline constexpr CapabilityId kModuleCapabilities_12[] = {CapabilityId::Focus};
+inline constexpr CapabilityId kModuleCapabilities_13[] = {CapabilityId::HearingAids};
+inline constexpr CapabilityId kModuleCapabilities_14[] = {CapabilityId::LowPower};
+inline constexpr CapabilityId kModuleCapabilities_15[] = {CapabilityId::Magnifier};
+inline constexpr CapabilityId kModuleCapabilities_16[] = {CapabilityId::MediaControlsVolume};
+inline constexpr CapabilityId kModuleCapabilities_17[] = {CapabilityId::Mute};
+inline constexpr CapabilityId kModuleCapabilities_18[] = {CapabilityId::Nfc};
+inline constexpr CapabilityId kModuleCapabilities_19[] = {CapabilityId::OrientationLock};
+inline constexpr CapabilityId kModuleCapabilities_20[] = {CapabilityId::PerformanceTrace};
+inline constexpr CapabilityId kModuleCapabilities_21[] = {CapabilityId::QrCode};
+inline constexpr CapabilityId kModuleCapabilities_22[] = {CapabilityId::Replaykit};
+inline constexpr CapabilityId kModuleCapabilities_23[] = {CapabilityId::Shazam};
+inline constexpr CapabilityId kModuleCapabilities_24[] = {CapabilityId::SpringboardRinger};
+inline constexpr CapabilityId kModuleCapabilities_25[] = {CapabilityId::Stopwatch};
+inline constexpr CapabilityId kModuleCapabilities_26[] = {CapabilityId::Timer};
+inline constexpr CapabilityId kModuleCapabilities_27[] = {CapabilityId::TvRemote};
+inline constexpr CapabilityId kModuleCapabilities_28[] = {CapabilityId::VoiceMemos};
+inline constexpr CapabilityId kModuleCapabilities_29[] = {CapabilityId::Wallet};
+
+inline constexpr ModuleEntry kModules[kModuleCount] = {
+  {ModuleId::AccessibilityGuidedAccessControlCenterModule, "AccessibilityGuidedAccessControlCenterModule", "stock", kModuleCapabilities_0, 1},
+  {ModuleId::AccessibilityShorcutsModule, "AccessibilityShorcutsModule", "stock", kModuleCapabilities_1, 1},
+  {ModuleId::AccessibilitySoundDetectionControlCenterModule, "AccessibilitySoundDetectionControlCenterModule", "stock", kModuleCapabilities_2, 1},
+  {ModuleId::AccessibilityTextSizeModule, "AccessibilityTextSizeModule", "stock", kModuleCapabilities_3, 1},
+  {ModuleId::AirPlayMirroringModule, "AirPlayMirroringModule", "stock", kModuleCapabilities_4, 1},
+  {ModuleId::AlarmModule, "AlarmModule", "stock", kModuleCapabilities_5, 1},
+  {ModuleId::AppearanceModule, "AppearanceModule", "stock", kModuleCapabilities_6, 1},
+  {ModuleId::CalculatorModule, "CalculatorModule", "stock", kModuleCapabilities_7, 1},
+  {ModuleId::CameraModule, "CameraModule", "stock", kModuleCapabilities_8, 1},
+  {ModuleId::ConnectivityModule, "ConnectivityModule", "stock", kModuleCapabilities_9, 2},
+  {ModuleId::DisplayModule, "DisplayModule", "stock", kModuleCapabilities_10, 2},
+  {ModuleId::FlashlightModule, "FlashlightModule", "stock", kModuleCapabilities_11, 1},
+  {ModuleId::FocusUI, "FocusUI", "stock", kModuleCapabilities_12, 1},
+  {ModuleId::HearingAidsModule, "HearingAidsModule", "stock", kModuleCapabilities_13, 1},
+  {ModuleId::LowPowerModule, "LowPowerModule", "stock", kModuleCapabilities_14, 1},
+  {ModuleId::MagnifierModule, "MagnifierModule", "stock", kModuleCapabilities_15, 1},
+  {ModuleId::MediaControls, "MediaControls", "stock", kModuleCapabilities_16, 1},
+  {ModuleId::MuteModule, "MuteModule", "stock", kModuleCapabilities_17, 1},
+  {ModuleId::NFCControlCenterModule, "NFCControlCenterModule", "stock", kModuleCapabilities_18, 1},
+  {ModuleId::OrientationLockModule, "OrientationLockModule", "stock", kModuleCapabilities_19, 1},
+  {ModuleId::PerformanceTraceModule, "PerformanceTraceModule", "stock", kModuleCapabilities_20, 1},
+  {ModuleId::QRCodeModule, "QRCodeModule", "stock", kModuleCapabilities_21, 1},
+  {ModuleId::ReplayKitModule, "ReplayKitModule", "stock", kModuleCapabilities_22, 1},
+  {ModuleId::ShazamModule, "ShazamModule", "stock", kModuleCapabilities_23, 1},
+  {ModuleId::SpringBoard_Ringer, "SpringBoard_Ringer", "stock", kModuleCapabilities_24, 1},
+  {ModuleId::StopwatchModule, "StopwatchModule", "stock", kModuleCapabilities_25, 1},
+  {ModuleId::TimerModule, "TimerModule", "stock", kModuleCapabilities_26, 1},
+  {ModuleId::TVRemoteModule, "TVRemoteModule", "stock", kModuleCapabilities_27, 1},
+  {ModuleId::VoiceMemosModule, "VoiceMemosModule", "stock", kModuleCapabilities_28, 1},
+  {ModuleId::WalletModule, "WalletModule", "stock", kModuleCapabilities_29, 1},
+};
+static_assert(sizeof(kModules) / sizeof(kModules[0]) == kModuleCount, "module record length mismatch");
 
 struct CapabilityEntry {
   CapabilityId id;
@@ -270,7 +345,8 @@ inline constexpr const char *kVisibleStates_30[] = {"default"};
 inline constexpr const char *kVisibleStates_31[] = {"default"};
 
 // Constant-time lookup by typed CapabilityId is the array position: kCapabilities[ordinal].
-// kTagIndex mirrors the precomputed tag order for cross-TU identity checks.
+// kTagIndex mirrors the precomputed tag order for cross-TU identity checks; it is
+// NOT a constant-time tag -> capability map (see its declaration below).
 inline constexpr CapabilityEntry kCapabilities[kCapabilityCount] = {
   {CapabilityId::AccessibilityGuidedAccess, ModuleId::AccessibilityGuidedAccessControlCenterModule, "accessibility-guided-access", EvidenceDisposition::StockOnlyMissing, nullptr, nullptr, 0xb0dc11c7u, 0x00000000u, false, nullptr, 0, nullptr, 0, kVisibleStates_0, 1, true, false},
   {CapabilityId::AccessibilityShortcuts, ModuleId::AccessibilityShorcutsModule, "accessibility-shortcuts", EvidenceDisposition::StockOnlyUnknown, nullptr, nullptr, 0xc3cecd39u, 0x00000000u, false, kAliases_1, 1, nullptr, 0, kVisibleStates_1, 1, true, true},
@@ -305,8 +381,12 @@ inline constexpr CapabilityEntry kCapabilities[kCapabilityCount] = {
   {CapabilityId::VoiceMemos, ModuleId::VoiceMemosModule, "voice-memos", EvidenceDisposition::StockOnlyUnknown, nullptr, nullptr, 0x02ad98cfu, 0x00000000u, false, kAliases_30, 1, nullptr, 0, kVisibleStates_30, 1, true, false},
   {CapabilityId::Wallet, ModuleId::WalletModule, "wallet", EvidenceDisposition::StockOnlyUnknown, nullptr, nullptr, 0x8f2fbdacu, 0x00000000u, false, nullptr, 0, nullptr, 0, kVisibleStates_31, 1, true, false},
 };
+static_assert(sizeof(kCapabilities) / sizeof(kCapabilities[0]) == kCapabilityCount, "catalog length mismatch");
 
-// Precomputed tag index (sorted by tag) for constant-time tag -> capability lookup.
+// Sorted precomputed tag index (ascending tag). Tag lookup over this index is
+// a binary search — not a constant-time operation. Constant-time lookup remains
+// the typed CapabilityId ordinal into kCapabilities; this sorted index exists
+// only for cross-TU identity checks.
 inline constexpr CapabilityId kTagIndex[kCapabilityCount] = {
   CapabilityId::VoiceMemos, // tag 0x02ad98cfu
   CapabilityId::Replaykit, // tag 0x0c154146u
@@ -345,7 +425,6 @@ inline constexpr CapabilityId kTagIndex[kCapabilityCount] = {
 static_assert(kModuleCount == 30, "census is closed at 30 module identities");
 static_assert(kCapabilityCount == 32, "census is closed at 32 capabilities");
 static_assert(kEligibleCount == 13, "accepted 21D50 Plampy map has 13 eligible routes");
-static_assert(sizeof(kCapabilities) / sizeof(kCapabilities[0]) == kCapabilityCount, "catalog length mismatch");
 
 } // namespace generated
 } // namespace plampycc

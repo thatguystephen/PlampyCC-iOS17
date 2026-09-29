@@ -3,9 +3,10 @@
 // One deterministic operation: validate the checked-in manifest against the
 // closed 21D50 census contract and emit the immutable Objective-C++ stock
 // catalog plus the host/device evidence sidecar. The emitted runtime tables
-// contain only closed IDs, precomputed tags, fixed alias/route sets, the
-// selected activation bitset, and digests — no dynamic strings that require
-// setter-time parsing. The shipping dylib contains no manifest parser.
+// contain only closed IDs, precomputed tags, fixed alias/route sets, module
+// ownership entries, the selected activation bitset, and digests — no dynamic
+// strings that require setter-time parsing. The shipping dylib contains no
+// manifest parser.
 //
 // USAGE (from repo root):
 //   bun tools/theme-catalog/generate.ts            # validate + write outputs
@@ -14,27 +15,25 @@
 // Generation fails (nonzero exit) on any validation error or any byte
 // difference between rendered and checked-in output (stale-generation gate).
 
-// @ts-nocheck
-
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CONTRACT_21D50, validateManifest, type CensusContract } from "./validate.ts";
 import {
-  CONTRACT_21D50,
-  validateManifest,
-  type CensusContract,
-} from "./validate.ts";
-import { manifest, type ThemeManifest } from "../../manifest/theme-manifest.ts";
+  manifest,
+  type CapabilityData,
+  type LifecycleEvidenceData,
+  type ManifestData,
+  type ModuleData,
+} from "../../manifest/theme-manifest.ts";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HEADER_PATH = join(REPO_ROOT, "src", "generated", "PlampyCCThemeCatalog.hpp");
 const JSON_PATH = join(REPO_ROOT, "src", "generated", "PlampyCCThemeCatalog.json");
 
 // ---- deterministic helpers ---------------------------------------------------
-
-type Capability = ThemeManifest["capabilities"][number];
 
 function fnv1a32(input: string): number {
   let hash = 0x811c9dc5;
@@ -47,9 +46,30 @@ function fnv1a32(input: string): number {
 
 const sha256Hex = (value: string): string => createHash("sha256").update(value).digest("hex");
 const hex32 = (value: number): string => `0x${value.toString(16).padStart(8, "0")}u`;
+// Unsigned single-bit mask; `1 << 31` overflows a signed JS int32 otherwise.
+const bitFor = (index: number): number => (1 << index) >>> 0;
+
+// Escape a manifest string for embedding in a C++ string literal. Backslash and
+// double quote are escaped, and any other control character becomes a fixed
+// three-digit octal escape so a following octal digit cannot make it ambiguous.
+// Validation rejects control characters upstream; this is defense in depth.
+export function escapeCString(value: string): string {
+  let output = "";
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (char === "\\") output += "\\\\";
+    else if (char === '"') output += '\\"';
+    else if (char === "\n") output += "\\n";
+    else if (char === "\r") output += "\\r";
+    else if (char === "\t") output += "\\t";
+    else if (code < 0x20 || code === 0x7f) output += `\\${code.toString(8).padStart(3, "0")}`;
+    else output += char;
+  }
+  return output;
+}
 
 function cString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${escapeCString(value)}"`;
 }
 
 function capabilityEnumerator(id: string): string {
@@ -78,14 +98,36 @@ function dispositionEnumerator(disposition: string): string {
   }
 }
 
+function canonicalEvidence(
+  records: Readonly<Record<string, LifecycleEvidenceData>>,
+): ReadonlyArray<Record<string, unknown>> {
+  return Object.keys(records)
+    .sort()
+    .map((key) => {
+      const record = records[key];
+      return {
+        key,
+        id: record.id,
+        module: record.module,
+        capability: record.capability,
+        evidenceKind: record.evidenceKind,
+        ownerClass: record.ownerClass,
+        hostClass: record.hostClass,
+        selectors: record.selectors,
+        facts: record.facts,
+      };
+    });
+}
+
 // Canonical catalog serialization (seed order is canonical). A change to any
-// record, route, alias, disposition, or the selected stage changes the catalog
-// digest — which is the artifact identity.
-function canonicalCatalog(input: ThemeManifest): Record<string, unknown> {
+// record, route, alias, disposition, lifecycle-evidence record, or
+// renderer-adapter declaration changes the catalog digest — which is the
+// catalog artifact identity. The selected stage and the activation set are
+// deliberately absent: activation identity is the activation-set digest alone.
+function canonicalCatalog(input: ManifestData): Record<string, unknown> {
   return {
     schema: input.schema,
     target: input.target,
-    selectedStage: input.selectedStage,
     modules: input.modules.map((module) => ({
       id: module.id,
       safeDefault: module.safeDefault,
@@ -113,10 +155,12 @@ function canonicalCatalog(input: ThemeManifest): Record<string, unknown> {
         : null,
       deviceVector: capability.deviceVector,
     })),
+    rendererFamilyAdapters: input.rendererFamilyAdapters,
+    lifecycleEvidenceRecords: canonicalEvidence(input.lifecycleEvidenceRecords),
   };
 }
 
-export function computeDigests(input: ThemeManifest): { catalog: string; activationSet: string } {
+export function computeDigests(input: ManifestData): { catalog: string; activationSet: string } {
   const catalog = sha256Hex(JSON.stringify(canonicalCatalog(input)));
   const activationSet = sha256Hex(
     JSON.stringify({
@@ -130,18 +174,21 @@ export function computeDigests(input: ThemeManifest): { catalog: string; activat
 // ---- Objective-C++ rendering -------------------------------------------------
 
 function renderHeader(
-  input: ThemeManifest,
+  input: ManifestData,
   contract: CensusContract,
   digests: { catalog: string; activationSet: string },
 ): string {
   const eligibleCount = contract.eligibleIds.length;
   const stockOnlyCount = contract.capabilityIds.length - eligibleCount;
-  const bitset = input.selectedStage.activeCapabilities.reduce(
-    (accumulator, id, ordinal) => accumulator | (1 << contract.capabilityIds.indexOf(id)),
-    0,
+  const activeOrdinals = input.selectedStage.activeCapabilities.map((id) =>
+    contract.capabilityIds.indexOf(id),
   );
+  const bitset = activeOrdinals.reduce((accumulator, ordinal) => {
+    return ordinal >= 0 ? (accumulator | bitFor(ordinal)) >>> 0 : accumulator;
+  }, 0);
   const activeHex = hex32(bitset);
   const capabilities = input.capabilities;
+  const modules = input.modules;
 
   const lines: string[] = [];
   const push = (text: string) => lines.push(text);
@@ -209,6 +256,44 @@ function renderHeader(
   push("  const char *bundleDir;");
   push("};");
   push("");
+  push("// Immutable Module record: identity, safe default, and explicit capability");
+  push("// ownership as an immutable range (pointer + count over constexpr data).");
+  push("struct ModuleEntry {");
+  push("  ModuleId id;");
+  push("  const char *idString;");
+  push("  const char *safeDefault;");
+  push("  const CapabilityId *capabilities;");
+  push("  std::size_t capabilityCount;");
+  push("};");
+  push("");
+
+  // Per-module immutable capability ownership arrays.
+  modules.forEach((module, ordinal) => {
+    const symbol = `kModuleCapabilities_${ordinal}`;
+    if (module.capabilities.length === 0) {
+      push(`// ${module.id}: no capabilities (ownership set is empty).`);
+      return;
+    }
+    push(
+      `inline constexpr CapabilityId ${symbol}[] = {${module.capabilities
+        .map((capability) => `CapabilityId::${capabilityEnumerator(capability)}`)
+        .join(", ")}};`,
+    );
+  });
+  push("");
+  push("inline constexpr ModuleEntry kModules[kModuleCount] = {");
+  modules.forEach((module, ordinal) => {
+    const symbol = `kModuleCapabilities_${ordinal}`;
+    const ref = module.capabilities.length > 0 ? symbol : "nullptr";
+    push(
+      `  {ModuleId::${module.id}, ${cString(module.id)}, ${cString(module.safeDefault)}, ${ref}, ${module.capabilities.length}},`,
+    );
+  });
+  push("};");
+  push(
+    'static_assert(sizeof(kModules) / sizeof(kModules[0]) == kModuleCount, "module record length mismatch");',
+  );
+  push("");
   push("struct CapabilityEntry {");
   push("  CapabilityId id;");
   push("  ModuleId module;");
@@ -230,10 +315,6 @@ function renderHeader(
   push("};");
   push("");
 
-  const aliasArrays: string[] = [];
-  const routeArrays: string[] = [];
-  const stateArrays: string[] = [];
-
   capabilities.forEach((capability, ordinal) => {
     push(`// --- ${capability.id} (${capability.disposition}) ---`);
 
@@ -242,7 +323,6 @@ function renderHeader(
     const stateSymbol = `kVisibleStates_${ordinal}`;
 
     if (capability.stockAliases.length > 0) {
-      aliasArrays.push(aliasSymbol);
       push(
         `inline constexpr StockAlias ${aliasSymbol}[] = {${capability.stockAliases
           .map((alias) => `{${cString(alias)}}`)
@@ -251,14 +331,12 @@ function renderHeader(
     }
     const routes = capability.plampyRecipe ? capability.plampyRecipe.packages : [];
     if (routes.length > 0) {
-      routeArrays.push(routeSymbol);
       push(
         `inline constexpr PackageRoute ${routeSymbol}[] = {${routes
           .map((route) => `{${cString(route.packageName)}, ${cString(route.bundleDir)}}`)
           .join(", ")}};`,
       );
     }
-    stateArrays.push(stateSymbol);
     push(
       `inline constexpr const char *${stateSymbol}[] = {${capability.deviceVector.visibleStates
         .map((state) => cString(state))
@@ -268,19 +346,23 @@ function renderHeader(
   });
 
   push("// Constant-time lookup by typed CapabilityId is the array position: kCapabilities[ordinal].");
-  push("// kTagIndex mirrors the precomputed tag order for cross-TU identity checks.");
+  push("// kTagIndex mirrors the precomputed tag order for cross-TU identity checks; it is");
+  push("// NOT a constant-time tag -> capability map (see its declaration below).");
   push("inline constexpr CapabilityEntry kCapabilities[kCapabilityCount] = {");
   capabilities.forEach((capability, ordinal) => {
     const active = input.selectedStage.activeCapabilities.includes(capability.id);
+    const ordinalIndex = contract.capabilityIds.indexOf(capability.id);
     const aliasRef = capability.stockAliases.length > 0 ? `kAliases_${ordinal}` : "nullptr";
-    const routeRef = (capability.plampyRecipe?.packages.length ?? 0) > 0 ? `kRoutes_${ordinal}` : "nullptr";
+    const routeRef = (capability.plampyRecipe?.packages.length ?? 0) > 0
+      ? `kRoutes_${ordinal}`
+      : "nullptr";
     const stateRef = `kVisibleStates_${ordinal}`;
     push(
       `  {CapabilityId::${capabilityEnumerator(capability.id)}, ModuleId::${capability.module}, ` +
         `${cString(capability.id)}, EvidenceDisposition::${dispositionEnumerator(capability.disposition)}, ` +
         `${capability.rendererFamily ? cString(capability.rendererFamily) : "nullptr"}, ` +
         `${capability.lifecycleEvidence ? cString(capability.lifecycleEvidence) : "nullptr"}, ` +
-        `${hex32(fnv1a32(capability.id))}, ${hex32(active ? 1 << ordinal : 0)}, ` +
+        `${hex32(fnv1a32(capability.id))}, ${hex32(active && ordinalIndex >= 0 ? bitFor(ordinalIndex) : 0)}, ` +
         `${capability.disposition === "eligible" ? "true" : "false"}, ` +
         `${aliasRef}, ${capability.stockAliases.length}, ` +
         `${routeRef}, ${capability.plampyRecipe?.packages.length ?? 0}, ` +
@@ -290,23 +372,28 @@ function renderHeader(
     );
   });
   push("};");
+  push(
+    'static_assert(sizeof(kCapabilities) / sizeof(kCapabilities[0]) == kCapabilityCount, "catalog length mismatch");',
+  );
   push("");
-  push("// Precomputed tag index (sorted by tag) for constant-time tag -> capability lookup.");
+  push("// Sorted precomputed tag index (ascending tag). Tag lookup over this index is");
+  push("// a binary search — not a constant-time operation. Constant-time lookup remains");
+  push("// the typed CapabilityId ordinal into kCapabilities; this sorted index exists");
+  push("// only for cross-TU identity checks.");
   push("inline constexpr CapabilityId kTagIndex[kCapabilityCount] = {");
   const byTag = capabilities
     .map((capability, ordinal) => ({ tag: fnv1a32(capability.id), ordinal }))
     .sort((left, right) => left.tag - right.tag);
   byTag.forEach(({ ordinal }) => {
-    push(`  CapabilityId::${capabilityEnumerator(capabilities[ordinal].id)}, // tag ${hex32(fnv1a32(capabilities[ordinal].id))}`);
+    push(`  CapabilityId::${capabilityEnumerator(capabilities[ordinal]!.id)}, // tag ${hex32(fnv1a32(capabilities[ordinal]!.id))}`);
   });
   push("};");
   push("");
-  push("static_assert(kModuleCount == 30, \"census is closed at 30 module identities\");");
-  push("static_assert(kCapabilityCount == 32, \"census is closed at 32 capabilities\");");
-  push("static_assert(kEligibleCount == 13, \"accepted 21D50 Plampy map has 13 eligible routes\");");
-  push(
-    "static_assert(sizeof(kCapabilities) / sizeof(kCapabilities[0]) == kCapabilityCount, \"catalog length mismatch\");",
-  );
+  // Census assertions are generated from the supplied validated contract so an
+  // existing-family extension (31/33/14) compiles against its extended contract.
+  push(`static_assert(kModuleCount == ${contract.moduleIds.length}, "census is closed at ${contract.moduleIds.length} module identities");`);
+  push(`static_assert(kCapabilityCount == ${contract.capabilityIds.length}, "census is closed at ${contract.capabilityIds.length} capabilities");`);
+  push(`static_assert(kEligibleCount == ${eligibleCount}, "accepted 21D50 Plampy map has ${eligibleCount} eligible routes");`);
   push("");
   push("} // namespace generated");
   push("} // namespace plampycc");
@@ -317,12 +404,15 @@ function renderHeader(
 }
 
 function renderJson(
-  input: ThemeManifest,
+  input: ManifestData,
   contract: CensusContract,
   digests: { catalog: string; activationSet: string },
 ): string {
-  const bitset = input.selectedStage.activeCapabilities.reduce(
-    (accumulator, id, ordinal) => accumulator | (1 << contract.capabilityIds.indexOf(id)),
+  const activeOrdinals = input.selectedStage.activeCapabilities.map((id) =>
+    contract.capabilityIds.indexOf(id),
+  );
+  const bitset = activeOrdinals.reduce(
+    (accumulator, ordinal) => (ordinal >= 0 ? (accumulator | bitFor(ordinal)) >>> 0 : accumulator),
     0,
   );
   const payload = {
@@ -370,6 +460,11 @@ function renderJson(
       routes: capability.plampyRecipe?.packages ?? [],
       deviceVector: capability.deviceVector,
     })),
+    // Host/device evidence metadata: the exact lifecycle evidence records and
+    // renderer-adapter declarations that generation validated. Not parsed by
+    // SpringBoard.
+    rendererFamilyAdapters: input.rendererFamilyAdapters,
+    lifecycleEvidence: input.lifecycleEvidenceRecords,
   };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }
@@ -388,7 +483,7 @@ export type RenderedCatalog = {
 const layoutAssetExists = (path: string): boolean => existsSync(join(REPO_ROOT, path));
 
 export function renderCatalog(
-  input: ThemeManifest,
+  input: ManifestData,
   options: RenderOptions = {},
 ): RenderedCatalog {
   const contract = options.contract ?? CONTRACT_21D50;
@@ -416,7 +511,7 @@ function main(): void {
   try {
     rendered = renderCatalog(manifest);
   } catch (error) {
-    console.error((error as Error).message);
+    console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
 

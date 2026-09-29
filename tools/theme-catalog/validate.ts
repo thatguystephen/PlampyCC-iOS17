@@ -8,19 +8,29 @@
 //   seed             seed digests do not match the immutable input reference
 //   count            record counts differ from the census (30/32/13 eligible)
 //   id               duplicated, omitted, malformed, or unknown module/
-//                    capability IDs
+//                    capability IDs, malformed module/capability records
 //   ownership        capability/module ownership is inconsistent (cross-module
-//                    references, local-index gaps, unlisted capabilities)
+//                    references, local-index gaps, unlisted capabilities,
+//                    duplicate capability membership inside or across module
+//                    capability lists)
 //   disposition      missing/unknown disposition, implicit eligibility default,
 //                    stock-only record emitting a route, eligible record without
 //                    family/recipe, or a seed-disposition mapping violation
 //   alias            empty/duplicate alias set or an alias collision without
 //                    explicit disambiguation
 //   asset            eligible record without a validated required Plampy asset
-//   family           Renderer Family with no typed adapter
-//   evidence         dangling or incomplete lifecycle evidence; an eligible
+//   family           Renderer Family outside the closed 21D50 set, missing or
+//                    duplicated adapter declaration, or an adapter/seam
+//                    declaration that is not the exact typed CAML declaration
+//   evidence         structurally incomplete lifecycle evidence (missing
+//                    role/fact, selector without encoding or call-site source,
+//                    placeholder-only record, key/record.id mismatch, sources
+//                    not bound to 21D50, or synthetic evidence claiming direct
+//                    21D50 evidence); dangling references; an eligible
 //                    capability in the activation set without complete direct
 //                    21D50 lifecycle evidence
+//   string           newline/control characters in a manifest string that
+//                    generation embeds in C++
 //   selected-stage   missing stage selection (exactly one stage per artifact)
 //   stage-name       unknown stage name
 //   stage-duplicate  duplicated active ID inside the stage
@@ -31,16 +41,16 @@
 // Catalog eligibility never requires lifecycle evidence: eligibility is a
 // catalog fact, activation is an artifact fact. Missing lifecycle evidence
 // leaves a catalog-eligible capability inactive and stock-forwarding.
+//
+// The validator accepts `unknown` at its external boundary and narrows each
+// value by validation before operating on it. It never casts unchecked input
+// to ThemeManifest.
 
-import type {
-  CapabilityId,
-  CapabilityRecord,
-  EvidenceDisposition,
-  LifecycleEvidenceId,
-  LifecycleEvidenceRecord,
-  ModuleRecord,
-  StageName,
-  ThemeManifest,
+import {
+  LIFECYCLE_FACTS,
+  LIFECYCLE_ROLES,
+  type LifecycleFact,
+  type LifecycleRole,
 } from "../../manifest/theme-manifest.ts";
 
 export type ValidationCode =
@@ -54,6 +64,7 @@ export type ValidationCode =
   | "asset"
   | "family"
   | "evidence"
+  | "string"
   | "selected-stage"
   | "stage-name"
   | "stage-duplicate"
@@ -174,7 +185,7 @@ export const CONTRACT_21D50: CensusContract = {
 // Stage shapes are contract constants of the artifact series, not of one
 // artifact. Only the selected stage becomes the artifact's closed activation
 // set (and therefore the only stage that requires complete lifecycle evidence).
-export const STAGE_CARDINALITY: Readonly<Record<StageName, number | "eligible-set">> = {
+export const STAGE_CARDINALITY: Readonly<Record<string, number | "eligible-set">> = {
   Q0: 0,
   A1: 1,
   A2: 4,
@@ -199,9 +210,64 @@ const DISPOSITIONS: readonly string[] = [
 ];
 
 const STAGE_NAMES: readonly string[] = ["Q0", "A1", "A2", "A3", "R1"];
+const SEED_DISPOSITIONS: readonly string[] = [
+  "verified_asset_candidate",
+  "missing_asset_stock",
+  "unknown_renderer_stock",
+  "unresolved_catalog_stock",
+];
+const SEED_EVIDENCE_TYPES: readonly string[] = ["animated_caml", "static_png", "unknown"];
+const MODULE_RENDERER_STATUSES: readonly string[] = ["verified", "inferred", "unknown"];
+const HOST_FORMS: readonly string[] = [
+  "button-host",
+  "slider-host",
+  "expansion-host",
+  "unknown-host",
+];
 
 const MODULE_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const CAPABILITY_ID_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+// Objective-C method-encoding shape (e.g. v24@0:8@16, @24@0:8).
+const METHOD_ENCODING_PATTERN = /^[a-zA-Z0-9@:^()*#]+$/;
+
+// The 21D50 renderer-family set is closed: CAML Package Setter is the only
+// eligible family. Invented family names are rejected even when accompanied by
+// arbitrary adapter strings.
+export const RENDERER_FAMILIES: readonly string[] = ["caml-package-setter"];
+
+// The exact typed CAML adapter/seam declaration (typed predecessor aliases, not
+// raw IMP). A declaration that differs in any field is not this adapter.
+export const CAML_ADAPTER_NAME = "CAMLAdapter";
+export type CamlSeamDeclaration = {
+  readonly name: string;
+  readonly ownerClass: string;
+  readonly selector: string;
+  readonly encoding: string;
+  readonly predecessorType: string;
+};
+export const CAML_SEAMS: readonly CamlSeamDeclaration[] = [
+  {
+    name: "button-package",
+    ownerClass: "CCUIButtonModuleView",
+    selector: "setGlyphPackageDescription:",
+    encoding: "v24@0:8@16",
+    predecessorType: "void (*)(id, SEL, id)",
+  },
+  {
+    name: "round-package",
+    ownerClass: "CCUIRoundButton",
+    selector: "setGlyphPackageDescription:",
+    encoding: "v24@0:8@16",
+    predecessorType: "void (*)(id, SEL, id)",
+  },
+  {
+    name: "slider-package",
+    ownerClass: "CCUIBaseSliderView",
+    selector: "setGlyphPackageDescription:",
+    encoding: "v24@0:8@16",
+    predecessorType: "void (*)(id, SEL, id)",
+  },
+];
 
 export type ValidateOptions = {
   readonly contract?: CensusContract;
@@ -215,6 +281,14 @@ const isObject = (value: unknown): value is Mutable =>
 const isString = (value: unknown): value is string => typeof value === "string";
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((entry) => isString(entry));
+
+// Newlines and control characters must never reach a C++ string literal.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+// Placeholder-only evidence values prove nothing.
+const PLACEHOLDER_VALUE = /^(todo|tbd|tba|placeholder|synthetic|none|n\/a|na|xxx|\?|-|\.\.\.)$/i;
+
+const isPlaceholder = (value: string): boolean => PLACEHOLDER_VALUE.test(value.trim());
+const isBoundTo21D50 = (value: string): boolean => value.includes("21D50");
 
 // Deterministic seed-disposition mapping (see manifest/theme-manifest.ts).
 export function expectedDisposition(
@@ -242,40 +316,183 @@ export function expectedDisposition(
   }
 }
 
-export function isLifecycleEvidenceComplete(record: unknown): boolean {
+type Fail = (code: ValidationCode, message: string) => void;
+
+// Structural lifecycle-evidence gate. A record is schema-complete only when its
+// map key equals record.id; bind, close, detach, and reuse evidence is
+// represented exactly once each; every named selector carries a matching
+// method encoding and call-site evidence (signals carry call-site evidence and
+// no encoding); and every Issue #9 lifecycle fact (epoch invalidation, producer
+// tag, stock capture, newer-stock adoption, restoration, teardown, and the
+// fail-open missing-fact condition) is present with a non-placeholder statement
+// and source. Sources must be explicitly bound to 21D50 exactly when the record
+// claims direct-21d50 evidence; synthetic fixtures must not claim it.
+export function validateLifecycleEvidenceRecord(
+  mapKey: string,
+  record: unknown,
+  fail: Fail,
+): void {
+  if (!isObject(record)) {
+    fail("evidence", `lifecycle evidence record ${mapKey} is not an object`);
+    return;
+  }
+  const context = `lifecycle evidence ${mapKey}`;
+  const id = record.id;
+  if (!isString(id) || id.length === 0) {
+    fail("evidence", `${context} has a malformed id`);
+    return;
+  }
+  if (id !== mapKey) {
+    fail("evidence", `${context} key does not match record.id ${id}`);
+  }
+
+  const evidenceKind = record.evidenceKind;
+  if (evidenceKind !== "direct-21d50" && evidenceKind !== "synthetic-fixture") {
+    fail("evidence", `${context} has an unknown evidence kind: ${String(evidenceKind)}`);
+    return;
+  }
+  const direct = evidenceKind === "direct-21d50";
+
+  for (const field of ["module", "capability", "ownerClass", "hostClass"]) {
+    const value = record[field];
+    if (!isString(value) || value.length === 0) {
+      fail("evidence", `${context} has a malformed ${field}`);
+    } else if (isPlaceholder(value)) {
+      fail("evidence", `${context} ${field} is placeholder-only`);
+    }
+  }
+
+  const checkSource = (value: unknown, what: string): void => {
+    if (!isString(value) || value.length === 0) {
+      fail("evidence", `${context} lacks ${what}`);
+      return;
+    }
+    if (isPlaceholder(value)) {
+      fail("evidence", `${context} ${what} is placeholder-only`);
+      return;
+    }
+    if (direct && !isBoundTo21D50(value)) {
+      fail("evidence", `${context} ${what} is not explicitly bound to 21D50`);
+    }
+    if (!direct && isBoundTo21D50(value)) {
+      fail("evidence", `synthetic fixture ${mapKey} must not claim direct 21D50 evidence in ${what}`);
+    }
+  };
+
+  // Selector/signal evidence: exactly one entry per lifecycle role.
+  const selectors = record.selectors;
+  if (!Array.isArray(selectors)) {
+    fail("evidence", `${context} has no selector/signal evidence`);
+  } else {
+    const roles = new Set<string>();
+    for (const raw of selectors as unknown[]) {
+      if (!isObject(raw)) {
+        fail("evidence", `${context} has a malformed selector/signal entry`);
+        continue;
+      }
+      const role = raw.role;
+      if (!isString(role) || !LIFECYCLE_ROLES.includes(role as LifecycleRole)) {
+        fail("evidence", `${context} names an unknown lifecycle role: ${String(role)}`);
+        continue;
+      }
+      if (roles.has(role)) {
+        fail("evidence", `${context} represents ${role} evidence more than once`);
+      }
+      roles.add(role);
+
+      const form = raw.form;
+      const name = raw.name;
+      const nameOk = isString(name) && name.length > 0 && !isPlaceholder(name);
+      if (!nameOk) {
+        fail("evidence", `${context} ${role} evidence lacks a named selector or signal`);
+      }
+      if (form === "selector") {
+        const encoding = raw.encoding;
+        if (
+          !isString(encoding) ||
+          encoding.length === 0 ||
+          !METHOD_ENCODING_PATTERN.test(encoding) ||
+          isPlaceholder(encoding)
+        ) {
+          fail("evidence", `${context} selector ${String(name)} lacks a matching method encoding`);
+        }
+      } else if (form === "signal") {
+        if (raw.encoding !== null) {
+          fail("evidence", `${context} signal ${String(name)} must not claim a method encoding`);
+        }
+      } else {
+        fail("evidence", `${context} ${role} evidence has an unknown form: ${String(form)}`);
+      }
+      checkSource(raw.callSiteSource, `${role} call-site source`);
+    }
+    for (const role of LIFECYCLE_ROLES) {
+      if (!roles.has(role)) {
+        fail("evidence", `${context} does not represent ${role} evidence`);
+      }
+    }
+  }
+
+  // Lifecycle fact evidence: exactly one entry per Issue #9 fact.
+  const facts = record.facts;
+  if (!Array.isArray(facts)) {
+    fail("evidence", `${context} has no lifecycle fact evidence`);
+  } else {
+    const kinds = new Set<string>();
+    for (const raw of facts as unknown[]) {
+      if (!isObject(raw)) {
+        fail("evidence", `${context} has a malformed lifecycle fact entry`);
+        continue;
+      }
+      const fact = raw.fact;
+      if (!isString(fact) || !LIFECYCLE_FACTS.includes(fact as LifecycleFact)) {
+        fail("evidence", `${context} names an unknown lifecycle fact: ${String(fact)}`);
+        continue;
+      }
+      if (kinds.has(fact)) {
+        fail("evidence", `${context} represents ${fact} more than once`);
+      }
+      kinds.add(fact);
+      const statement = raw.statement;
+      if (!isString(statement) || statement.length === 0) {
+        fail("evidence", `${context} ${fact} lacks a statement`);
+      } else if (isPlaceholder(statement)) {
+        fail("evidence", `${context} ${fact} statement is placeholder-only`);
+      }
+      checkSource(raw.source, `${fact} source`);
+    }
+    for (const fact of LIFECYCLE_FACTS) {
+      if (!kinds.has(fact)) {
+        fail("evidence", `${context} does not represent the ${fact} fact`);
+      }
+    }
+  }
+}
+
+// A record closes activation only when it is structurally complete direct
+// 21D50 evidence. Synthetic fixtures prove schema shape and never activate.
+export function isDirectLifecycleEvidence(record: unknown): boolean {
   if (!isObject(record)) return false;
-  const strings = [
-    "id",
-    "module",
-    "capability",
-    "ownerClass",
-    "hostClass",
-    "bindSelector",
-    "closeSignal",
-    "detachSignal",
-    "reuseSignal",
-    "epochInvalidation",
-    "producerTagPath",
-    "stockCapturePath",
-    "newerStockAdoptionPath",
-    "restorationPath",
-    "teardownPath",
-    "missingFactCondition",
-  ];
-  for (const key of strings) {
-    if (!isString(record[key]) || record[key].length === 0) return false;
+  if (record.evidenceKind !== "direct-21d50") return false;
+  const sources: unknown[] = [];
+  if (Array.isArray(record.selectors)) {
+    for (const raw of record.selectors as unknown[]) {
+      if (isObject(raw)) sources.push(raw.callSiteSource);
+    }
   }
-  const encodings = record.selectorEncodings;
-  if (!isObject(encodings) || Object.keys(encodings).length === 0) return false;
-  for (const [selector, encoding] of Object.entries(encodings)) {
-    if (!isString(selector) || selector.length === 0) return false;
-    if (!isString(encoding) || encoding.length === 0) return false;
+  if (Array.isArray(record.facts)) {
+    for (const raw of record.facts as unknown[]) {
+      if (isObject(raw)) sources.push(raw.source);
+    }
   }
-  const callSites = record.callSiteSources;
   return (
-    isStringArray(callSites) &&
-    callSites.length > 0 &&
-    callSites.every((source) => source.length > 0)
+    sources.length > 0 &&
+    sources.every(
+      (source) =>
+        isString(source) &&
+        source.length > 0 &&
+        !isPlaceholder(source) &&
+        isBoundTo21D50(source),
+    )
   );
 }
 
@@ -286,7 +503,7 @@ export function validateManifest(
   const contract = options.contract ?? CONTRACT_21D50;
   const assetExists = options.assetExists ?? (() => true);
   const errors: ValidationIssue[] = [];
-  const fail = (code: ValidationCode, message: string) => {
+  const fail: Fail = (code, message) => {
     errors.push({ code, message });
   };
 
@@ -294,7 +511,18 @@ export function validateManifest(
     fail("id", "manifest is not an object");
     return { ok: false, errors };
   }
-  const manifest = input as unknown as ThemeManifest & Mutable;
+  // Narrowed by the isObject guard above; every field below is re-checked.
+  const manifest = input;
+
+  // Embedded C++ string literals may contain no newline/control characters.
+  const clean = (value: unknown, what: string): value is string => {
+    if (!isString(value) || value.length === 0) return false;
+    if (CONTROL_CHARS.test(value)) {
+      fail("string", `${what} contains newline/control characters`);
+      return false;
+    }
+    return true;
+  };
 
   // ---- schema + target + seed -------------------------------------------------
   if (manifest.schema !== "plampycc-theme-manifest/v1") {
@@ -321,7 +549,7 @@ export function validateManifest(
     fail("seed", "seed digests do not match the immutable input reference");
   }
 
-  // ---- module records --------------------------------------------------------
+  // ---- record collections -----------------------------------------------------
   const modules: unknown[] = Array.isArray(manifest.modules) ? manifest.modules : [];
   const capabilities: unknown[] = Array.isArray(manifest.capabilities)
     ? manifest.capabilities
@@ -329,9 +557,10 @@ export function validateManifest(
   const adapters: unknown[] = Array.isArray(manifest.rendererFamilyAdapters)
     ? manifest.rendererFamilyAdapters
     : [];
-  const evidenceRecords: Mutable = isObject(manifest.lifecycleEvidenceRecords)
+  const evidenceRecords: unknown = isObject(manifest.lifecycleEvidenceRecords)
     ? manifest.lifecycleEvidenceRecords
     : {};
+  const evidenceMap: Mutable = isObject(evidenceRecords) ? evidenceRecords : {};
 
   const moduleIds = modules.map((entry) =>
     isObject(entry) && isString(entry.id) ? entry.id : "",
@@ -382,35 +611,130 @@ export function validateManifest(
     }
   }
 
-  // ---- adapters (Renderer Family must have a typed adapter) ------------------
-  const adapterFamilies = new Map<string, unknown>();
+  // ---- module records (identity, safe default, explicit ownership membership) --
+  const moduleOwnerships = new Map<string, string[]>();
+  for (const entry of modules) {
+    if (!isObject(entry)) {
+      fail("id", "module record is not an object");
+      continue;
+    }
+    const moduleId = isString(entry.id) ? entry.id : "";
+    if (entry.safeDefault !== "stock") {
+      fail("id", `module ${moduleId} does not preserve the stock safe default`);
+    }
+    const rendererStatus = entry.seedRendererEvidenceStatus;
+    if (!isString(rendererStatus) || !MODULE_RENDERER_STATUSES.includes(rendererStatus)) {
+      fail("id", `module ${moduleId} has a missing or unknown seed renderer evidence status`);
+    }
+    const members = entry.capabilities;
+    if (!Array.isArray(members)) {
+      fail("ownership", `module ${moduleId} has a malformed capability list`);
+      continue;
+    }
+    const seen = new Set<string>();
+    for (const rawMember of members as unknown[]) {
+      if (!clean(rawMember, `module ${moduleId} capability membership`)) {
+        fail("ownership", `module ${moduleId} has a malformed capability membership`);
+        continue;
+      }
+      const member = rawMember;
+      if (!expectedCapabilities.has(member)) {
+        fail("id", `module ${moduleId} lists capability unknown to the census: ${member}`);
+      }
+      if (seen.has(member)) {
+        fail(
+          "ownership",
+          `module ${moduleId} lists capability ${member} more than once (duplicate ownership membership)`,
+        );
+        continue;
+      }
+      seen.add(member);
+      const owners = moduleOwnerships.get(member) ?? [];
+      owners.push(moduleId);
+      moduleOwnerships.set(member, owners);
+    }
+  }
+  // Every capability record appears in exactly one module capability list.
+  for (const capabilityId of new Set(capabilityIds)) {
+    if (!capabilityId) continue;
+    const owners = moduleOwnerships.get(capabilityId) ?? [];
+    if (owners.length === 0) {
+      fail("ownership", `capability ${capabilityId} is listed by no Module record`);
+    } else if (owners.length > 1) {
+      fail(
+        "ownership",
+        `capability ${capabilityId} is listed by ${owners.length} Module records (must appear exactly once)`,
+      );
+    }
+  }
+
+  // ---- adapters (closed Renderer Family set, exact typed CAML declaration) ----
+  const adapterFamilies = new Map<string, Mutable>();
   for (const adapter of adapters) {
     if (!isObject(adapter) || !isString(adapter.family)) {
       fail("family", "malformed Renderer Family adapter declaration");
       continue;
     }
-    adapterFamilies.set(adapter.family, adapter);
-    const seams = Array.isArray(adapter.seams) ? adapter.seams : [];
-    if (!isString(adapter.adapter) || adapter.adapter.length === 0 || seams.length === 0) {
-      fail("family", `Renderer Family ${adapter.family} lacks a typed adapter`);
+    const family = adapter.family;
+    if (!RENDERER_FAMILIES.includes(family)) {
+      fail("family", `invented Renderer Family adapter declaration: ${family}`);
       continue;
     }
+    if (adapterFamilies.has(family)) {
+      fail("family", `duplicate Renderer Family adapter declaration: ${family}`);
+      continue;
+    }
+    adapterFamilies.set(family, adapter);
+
+    // The exact typed CAML adapter/seam declaration.
+    if (adapter.adapter !== CAML_ADAPTER_NAME) {
+      fail(
+        "family",
+        `Renderer Family ${family} must declare the typed adapter ${CAML_ADAPTER_NAME} (found ${String(adapter.adapter)})`,
+      );
+    }
+    const seams: unknown[] = Array.isArray(adapter.seams) ? adapter.seams : [];
+    const seamByName = new Map<string, Mutable>();
     for (const seam of seams) {
-      if (
-        !isObject(seam) ||
-        !isString(seam.name) ||
-        seam.name.length === 0 ||
-        !isString(seam.ownerClass) ||
-        seam.ownerClass.length === 0 ||
-        !isString(seam.selector) ||
-        seam.selector.length === 0 ||
-        !isString(seam.encoding) ||
-        seam.encoding.length === 0 ||
-        !isString(seam.predecessorType) ||
-        seam.predecessorType.length === 0
-      ) {
-        fail("family", `Renderer Family ${adapter.family} has an untyped seam declaration`);
+      if (!isObject(seam) || !isString(seam.name) || seam.name.length === 0) {
+        fail("family", `Renderer Family ${family} has an untyped seam declaration`);
+        continue;
       }
+      if (seamByName.has(seam.name)) {
+        fail("family", `Renderer Family ${family} declares seam ${seam.name} more than once`);
+        continue;
+      }
+      seamByName.set(seam.name, seam);
+    }
+    if (seamByName.size !== CAML_SEAMS.length) {
+      fail(
+        "family",
+        `Renderer Family ${family} must declare exactly the ${CAML_SEAMS.length} typed CAML seams (found ${seamByName.size})`,
+      );
+    }
+    for (const expected of CAML_SEAMS) {
+      const seam = seamByName.get(expected.name);
+      if (!seam) {
+        fail("family", `Renderer Family ${family} is missing the ${expected.name} seam declaration`);
+        continue;
+      }
+      if (
+        seam.ownerClass !== expected.ownerClass ||
+        seam.selector !== expected.selector ||
+        seam.encoding !== expected.encoding ||
+        seam.predecessorType !== expected.predecessorType
+      ) {
+        fail(
+          "family",
+          `Renderer Family ${family} seam ${expected.name} is not the exact typed declaration (${expected.ownerClass} ${expected.selector} ${expected.encoding} ${expected.predecessorType})`,
+        );
+      }
+    }
+    if (adapters.length !== RENDERER_FAMILIES.length) {
+      fail(
+        "family",
+        `the 21D50 renderer-family set is closed at ${RENDERER_FAMILIES.join(", ")} (found ${adapters.length} adapter declarations)`,
+      );
     }
   }
 
@@ -434,22 +758,41 @@ export function validateManifest(
       continue;
     }
     const seedDisposition = capability.seedDisposition;
+    if (!isString(seedDisposition) || !SEED_DISPOSITIONS.includes(seedDisposition)) {
+      fail("disposition", `capability ${capabilityId} has a missing or unknown seed disposition`);
+      continue;
+    }
     const seedEvidenceType = capability.seedEvidenceType;
+    if (!isString(seedEvidenceType) || !SEED_EVIDENCE_TYPES.includes(seedEvidenceType)) {
+      fail("disposition", `capability ${capabilityId} has a missing or unknown seed evidence type`);
+      continue;
+    }
+    const hostForm = capability.hostForm;
+    if (!isString(hostForm) || !HOST_FORMS.includes(hostForm)) {
+      fail("id", `capability ${capabilityId} has a missing or unknown host form`);
+    }
 
     // Ownership: module back-reference and contiguous local index.
-    const owningModule = modules.find(
+    const owningModuleEntry = modules.find(
       (moduleEntry) =>
         isObject(moduleEntry) &&
         Array.isArray(moduleEntry.capabilities) &&
-        moduleEntry.capabilities.includes(capabilityId),
-    ) as ModuleRecord | undefined;
-    if (!isObject(owningModule) || owningModule.id !== capability.module) {
+        (moduleEntry.capabilities as unknown[]).includes(capabilityId),
+    );
+    const owningMembers: unknown = isObject(owningModuleEntry)
+      ? owningModuleEntry.capabilities
+      : undefined;
+    if (
+      !isObject(owningModuleEntry) ||
+      owningModuleEntry.id !== capability.module ||
+      !Array.isArray(owningMembers)
+    ) {
       fail(
         "ownership",
         `capability ${capabilityId} references Module Identity ${String(capability.module)} that does not own it`,
       );
     } else {
-      const index = owningModule.capabilities.indexOf(capabilityId as CapabilityId);
+      const index = (owningMembers as unknown[]).indexOf(capabilityId);
       if (capability.localIndex !== index) {
         fail(
           "ownership",
@@ -459,14 +802,10 @@ export function validateManifest(
     }
 
     // Seed disposition mapping must hold exactly.
-    const moduleStatus = isObject(owningModule)
-      ? String((owningModule as unknown as Mutable).seedRendererEvidenceStatus)
+    const moduleStatus = isObject(owningModuleEntry)
+      ? String(owningModuleEntry.seedRendererEvidenceStatus)
       : "";
-    const mapped = expectedDisposition(
-      isString(seedDisposition) ? seedDisposition : "",
-      isString(seedEvidenceType) ? seedEvidenceType : "",
-      moduleStatus,
-    );
+    const mapped = expectedDisposition(seedDisposition, seedEvidenceType, moduleStatus);
     if (mapped === null) {
       fail("disposition", `capability ${capabilityId} has unknown seed disposition mapping`);
     } else if (mapped !== disposition) {
@@ -478,39 +817,60 @@ export function validateManifest(
 
     // Aliases.
     const aliases = capability.stockAliases;
-    if (!isStringArray(aliases)) {
+    if (!Array.isArray(aliases) || !aliases.every((alias) => isString(alias))) {
       fail("alias", `capability ${capabilityId} has a malformed alias set`);
     } else {
-      if (new Set(aliases).size !== aliases.length) {
+      const aliasList = aliases as string[];
+      if (new Set(aliasList).size !== aliasList.length) {
         fail("alias", `capability ${capabilityId} has duplicate aliases`);
       }
-      for (const alias of aliases) {
-        if (alias.length === 0) fail("alias", `capability ${capabilityId} has an empty alias`);
+      for (const alias of aliasList) {
+        if (!clean(alias, `capability ${capabilityId} alias`)) {
+          fail("alias", `capability ${capabilityId} has an empty alias`);
+        }
         const owners = aliasOwners.get(alias) ?? [];
         owners.push(capability);
         aliasOwners.set(alias, owners);
       }
     }
-    if (!isStringArray(capability.stockAssets)) {
+    const stockAssets = capability.stockAssets;
+    if (!Array.isArray(stockAssets)) {
       fail("id", `capability ${capabilityId} has a malformed stock asset list`);
+    } else {
+      for (const asset of stockAssets as unknown[]) {
+        if (!clean(asset, `capability ${capabilityId} stock asset`)) {
+          fail("id", `capability ${capabilityId} has a malformed stock asset entry`);
+        }
+      }
     }
+    const deviceVector = capability.deviceVector;
+    const visibleStates: unknown = isObject(deviceVector) ? deviceVector.visibleStates : undefined;
+    const presentations: unknown = isObject(deviceVector) ? deviceVector.presentations : undefined;
     if (
-      !isObject(capability.deviceVector) ||
-      !isStringArray(capability.deviceVector.visibleStates) ||
-      capability.deviceVector.visibleStates.length === 0 ||
-      !Array.isArray(capability.deviceVector.presentations) ||
-      capability.deviceVector.presentations.length === 0 ||
-      !capability.deviceVector.presentations.every(
-        (presentation: unknown) => presentation === "compact" || presentation === "expanded",
+      !isObject(deviceVector) ||
+      !Array.isArray(visibleStates) ||
+      visibleStates.length === 0 ||
+      !(visibleStates as unknown[]).every((state) => clean(state, `capability ${capabilityId} visible state`)) ||
+      !Array.isArray(presentations) ||
+      presentations.length === 0 ||
+      !(presentations as unknown[]).every(
+        (presentation) => presentation === "compact" || presentation === "expanded",
       )
     ) {
       fail("id", `capability ${capabilityId} has a malformed device test vector`);
     }
 
+    // Renderer Family: closed set. Only an eligible record may name a family.
+    const family = capability.rendererFamily;
+    if (family !== null && family !== undefined) {
+      if (!isString(family) || !RENDERER_FAMILIES.includes(family)) {
+        fail("family", `capability ${capabilityId} names invented Renderer Family ${String(family)}`);
+      }
+    }
+
     // Eligibility: explicit, never defaulted. Eligible records need a verified
     // Renderer Family, a route, and validated assets; stock-only records emit
     // nothing.
-    const family = capability.rendererFamily;
     const recipe = capability.plampyRecipe;
     if (disposition === "eligible") {
       eligibleIds.push(capabilityId);
@@ -524,28 +884,30 @@ export function validateManifest(
         fail("disposition", `eligible capability ${capabilityId} lacks a Plampy recipe`);
         continue;
       }
-      for (const route of recipe.packages) {
+      for (const route of recipe.packages as unknown[]) {
         if (
           !isObject(route) ||
-          !isString(route.packageName) ||
-          route.packageName.length === 0 ||
-          !isString(route.bundleDir) ||
-          route.bundleDir.length === 0
+          !clean(route.packageName, `eligible capability ${capabilityId} route package`) ||
+          !clean(route.bundleDir, `eligible capability ${capabilityId} route bundle dir`)
         ) {
           fail("disposition", `eligible capability ${capabilityId} emits a malformed route`);
           continue;
         }
-        if (isStringArray(aliases) && !aliases.includes(route.packageName)) {
-          fail("alias", `route package ${route.packageName} is not a declared alias of ${capabilityId}`);
+        if (
+          Array.isArray(aliases) &&
+          aliases.every((alias) => isString(alias)) &&
+          !(aliases as string[]).includes(route.packageName)
+        ) {
+          fail("alias", `route package ${String(route.packageName)} is not a declared alias of ${capabilityId}`);
         }
-        const expectedAsset = `layout/Library/Application Support/PlampyCC/Plampy/Assets/${route.bundleDir}/${route.packageName}.ca/main.caml`;
+        const expectedAsset = `layout/Library/Application Support/PlampyCC/Plampy/Assets/${String(route.bundleDir)}/${String(route.packageName)}.ca/main.caml`;
         if (route.requiredAsset !== expectedAsset) {
           fail(
             "asset",
             `eligible capability ${capabilityId} required asset must be ${expectedAsset}`,
           );
-        } else if (!assetExists(route.requiredAsset)) {
-          fail("asset", `eligible capability ${capabilityId} required asset is missing: ${route.requiredAsset}`);
+        } else if (!assetExists(expectedAsset)) {
+          fail("asset", `eligible capability ${capabilityId} required asset is missing: ${expectedAsset}`);
         }
       }
     } else {
@@ -604,22 +966,22 @@ export function validateManifest(
   }
 
   // ---- lifecycle evidence ----------------------------------------------------
-  for (const [evidenceId, record] of Object.entries(evidenceRecords)) {
-    if (!isLifecycleEvidenceComplete(record)) {
-      fail("evidence", `lifecycle evidence record ${evidenceId} is incomplete`);
-    }
+  for (const [evidenceId, record] of Object.entries(evidenceMap)) {
+    validateLifecycleEvidenceRecord(evidenceId, record, fail);
   }
   for (const entry of capabilities) {
     if (!isObject(entry)) continue;
     const reference = entry.lifecycleEvidence;
     if (reference === null || reference === undefined) continue;
-    if (!isString(reference) || !isObject(evidenceRecords[reference])) {
-      fail("evidence", `capability ${String(entry.id)} references dangling lifecycle evidence ${String(reference)}`);
+    const capabilityId = String(entry.id);
+    if (!isString(reference) || !isObject(evidenceMap[reference])) {
+      fail("evidence", `capability ${capabilityId} references dangling lifecycle evidence ${String(reference)}`);
       continue;
     }
-    const record = evidenceRecords[reference] as unknown as LifecycleEvidenceRecord;
+    const record = evidenceMap[reference];
+    if (!isObject(record)) continue;
     if (record.capability !== entry.id || record.module !== entry.module) {
-      fail("evidence", `lifecycle evidence ${reference} does not own capability ${String(entry.id)}`);
+      fail("evidence", `lifecycle evidence ${reference} does not own capability ${capabilityId}`);
     }
   }
 
@@ -652,7 +1014,7 @@ export function validateManifest(
   const sameSet = (expected: readonly string[]): boolean =>
     activeSet.size === expected.length && expected.every((id) => activeSet.has(id));
 
-  const cardinality = STAGE_CARDINALITY[stageName as StageName];
+  const cardinality = STAGE_CARDINALITY[stageName];
   const expectedCardinality =
     cardinality === "eligible-set" ? contract.eligibleIds.length : cardinality;
   if (active.length !== expectedCardinality) {
@@ -690,7 +1052,7 @@ export function validateManifest(
     }
   }
   if ((stageName === "A3" || stageName === "R1") && !sameSet(contract.eligibleIds)) {
-    fail("stage-shape", `${stageName} must contain exactly the 13 eligible capabilities`);
+    fail("stage-shape", `${stageName} must contain exactly the ${contract.eligibleIds.length} eligible capabilities`);
   }
 
   // Activation gate: only eligible capabilities with complete direct 21D50
@@ -703,8 +1065,8 @@ export function validateManifest(
       continue;
     }
     const reference = record.lifecycleEvidence;
-    const evidence = isString(reference) ? evidenceRecords[reference] : undefined;
-    if (!isLifecycleEvidenceComplete(evidence)) {
+    const evidence = isString(reference) ? evidenceMap[reference] : undefined;
+    if (!isDirectLifecycleEvidence(evidence)) {
       fail(
         "evidence",
         `activated capability ${activeId} lacks complete direct 21D50 lifecycle evidence`,
