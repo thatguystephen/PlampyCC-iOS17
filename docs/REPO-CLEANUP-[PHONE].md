@@ -7,6 +7,8 @@ evidence was classified before any removal. All classification decisions were ma
 from on-disk content (hashes, `diff -rq`, git history, in-repo citations), not
 from filenames.
 
+**M1 supersession note (added later).** This record predates the M1 static-substitution subtraction (`docs/M1-STATIC-SUBTRACTION-CUTOVER.md`): `src/FlashlightOpticalPolicy.hpp`, the `src/Tweak.xm` glyph traces and `ScheduleGlyphStabilityCheck` named in the audit below, and the `icon-cache-contract`, `flashlight-optical-contract`, `glyph-trace-contract`, and `flashlight-asset-contract` suites in the verification log were all deleted at M1. History is retained as written; the current host gate is `tests/m1-static-subtraction-contract.py`.
+
 ## 1. Removed from the repository
 
 | Path | Class | Proof it is unnecessary | Disposition |

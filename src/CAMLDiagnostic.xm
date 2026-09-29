@@ -623,8 +623,8 @@ static bool SerializeEvent(CAMLDiagnosticEvent *event) {
     // The "g" (state) precision below is the state-token wire limit: it must
     // stay equal to caml_diag::kStateWirePrecision, and every approved state
     // token fits it so the documented token serializes untruncated. This is
-    // enforced by the static_assert in CAMLDiagnosticCore.hpp and by
-    // tests/glyph-trace-contract.py.
+    // enforced by the static_assert in CAMLDiagnosticCore.hpp and by the
+    // wire-precision contract in tests/caml-diagnostic-contract.py.
     int written = snprintf(event->serialized, sizeof(event->serialized),
                            "{\"v\":1,\"t\":%llu,\"w\":%u,\"s\":\"%.12s\",\"p\":\"%.20s\",\"x\":\"%.12s\",\"n\":%d,\"g\":\"%.12s\",\"d\":\"%.20s\",\"i\":%d,\"a\":\"%.20s\",\"c\":\"%.20s\",\"h\":\"%.12s\",\"f\":\"%.12s\",\"y\":\"%.12s\",\"o\":\"%.12s\",\"r\":%u,\"q\":%d,\"b\":\"%.25s\",\"u\":\"%.36s\"}\n",
                            (unsigned long long)serializedMonotonic, serializedWall,

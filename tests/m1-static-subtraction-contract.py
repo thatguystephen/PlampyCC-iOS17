@@ -167,6 +167,17 @@ for source_name, text in SOURCES.items():
 check(not (ROOT / "src/FlashlightOpticalPolicy.hpp").exists(),
       "substitution-only optical policy header still exists")
 
+# No bracketed redaction placeholder may survive in compiled source: the M1
+# candidate shipped one as the wallpaper root call and it did not compile.
+# Compiled source is everything the tweak and prefs bundles build (src/ and
+# prefs/, including generated tables and headers).
+PLACEHOLDER = re.compile(r"\[[A-Z][A-Z0-9_]{2,}\]")
+for directory in ("src", "prefs"):
+    for path in sorted((ROOT / directory).rglob("*")):
+        if path.is_file() and path.suffix in {".m", ".mm", ".x", ".xm", ".h", ".hpp", ".c", ".cpp"}:
+            check(PLACEHOLDER.search(path.read_text(errors="replace")) is None,
+                  f"bracketed redaction placeholder remains in compiled source {path.relative_to(ROOT)}")
+
 # ---------------------------------------------------------------------------
 # 2. No non-CAML hook can replace a module glyph.
 # ---------------------------------------------------------------------------
@@ -230,6 +241,21 @@ check("ReconcileWallpaper(overlay);\n        CAMLReconcilePackageConsumers();" i
 check("bool PlampyCCFunctionalEnabled(void)" in TWEAK
       and "int PlampyCCThemeType(void)" in TWEAK,
       "functional preference state is no longer exported to the CAML seam")
+
+# Retained wallpaper resolution: ThemeFile() must iterate the theme asset
+# roots (AssetRoots()) and resolve theme-relative files under the theme
+# name, and the wallpaper path must stay wallpaper.jpeg through that
+# resolver.
+theme_file = function_body(TWEAK, "ThemeFile")
+check("AssetRoots()" in theme_file,
+      "ThemeFile() must iterate the theme asset roots (AssetRoots())")
+check("ThemeName()" in theme_file and "relativePath" in theme_file
+      and "fileExistsAtPath" in theme_file,
+      "ThemeFile() must resolve theme-relative files under each asset root")
+check("AssetRoots(void)" in TWEAK,
+      "the wallpaper asset-root list definition was removed")
+check('ThemeFile(@"wallpaper.jpeg")' in function_body(TWEAK, "ReconcileWallpaper"),
+      "retained wallpaper code must resolve wallpaper.jpeg through the theme asset roots")
 
 # CAML route unchanged: three verified setter seams with predecessor slots and
 # the construct-and-pass factory boundary.
@@ -318,10 +344,16 @@ OBSOLETE = (
     "tests/native-flashlight-optical.cpp",
     "tests/measure-flashlight-optics.sh",
 )
+SKILL_TREE = ROOT / ".cursor/skills/verify-plampycc"
+SKILL_TEXT = "\n".join(p.read_text() for p in sorted(SKILL_TREE.rglob("*.md")))
 for path in OBSOLETE:
     check(not (ROOT / path).exists(), f"obsolete static-substitution gate still exists: {path}")
-    check(path not in workflow and path not in doctor,
+    check(path not in workflow and path not in doctor
+          and Path(path).name not in SKILL_TEXT,
           f"obsolete static-substitution gate is still wired into a verification surface: {path}")
+for p in sorted(SKILL_TREE.rglob("*.md")):
+    check(PLACEHOLDER.search(p.read_text()) is None,
+          f"bracketed redaction placeholder remains in the verify-plampycc skill tree: {p.relative_to(ROOT)}")
 doctor_block = doctor.split("## Doctor", 1)[1].split("## Drive", 1)[0]
 gate_lines = [line.strip() for line in doctor_block.splitlines()
               if re.match(r"^(python3|bun|\./node_modules)", line.strip())

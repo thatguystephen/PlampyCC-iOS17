@@ -2,6 +2,8 @@
 
 Post-build cleanup pass (task `t_274f0c57`). Rule applied: remove only artifacts proven unnecessary; classify everything else and leave it in place. Evidence is never deleted blindly — each deletion below carries a reproduction command.
 
+**M1 supersession note (added later).** This inventory records the 2026-09-27 cleanup state and predates the M1 static-substitution subtraction (`docs/M1-STATIC-SUBTRACTION-CUTOVER.md`): `src/FlashlightOpticalPolicy.hpp` and the optical/cache/asset/trace contract tests referenced below were deleted at M1. History is retained as written; the current host gate is `tests/m1-static-subtraction-contract.py`.
+
 ## Deleted (proven unnecessary)
 
 | Artifact | Proof it is unnecessary | Reproduce |
@@ -38,7 +40,7 @@ Full record: `docs/CAML-DIAGNOSTIC-IMPLEMENTATION.md` § "Shipped build disposit
 
 ## Exact changed files (this task)
 
-- `src/FlashlightOpticalPolicy.hpp` — restored the derivation comment (`kCompactScale` provenance, "NOT a header calibration" guard) stripped by an unexplained post-commit working-tree edit; the comment was introduced alongside the constants in `3ac9e78`
+- `src/FlashlightOpticalPolicy.hpp` — restored the derivation comment (`kCompactScale` provenance, "NOT a header calibration" guard) stripped by an unexplained post-commit working-tree edit; the comment was introduced alongside the constants in `3ac9e78` (the header itself was deleted at M1; see the supersession note above)
 - `.github/workflows/build-rootless.yml` — shipping build is release mode
 - `tests/static-check.ts` — build-mode pin inverted to assert the release-mode shipping path
 - `Makefile` — collector comment corrected (build-ID suffix is `-diag`, not `-ct`) and disposition stated

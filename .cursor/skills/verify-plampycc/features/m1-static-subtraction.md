@@ -12,7 +12,7 @@ byte-identical M0 catalog. Sources: `src/Tweak.xm`, `src/CAMLDiagnostic.*`,
 ## Sub-features
 
 - `substitution-absence` — no removed substitution IMP, predecessor slot, installer call edge, ownership key, cache/registry, render helper, ancestry/identifier route, delayed probe, compact/header substitution hook, or substitution-only trace name remains in production source.
-- `no-glyph-replacement` — no non-CAML hook can replace a module glyph: no glyph-setter write exists in source, and the header-glyph selector's remaining hook is the observer-only diagnostic seam (removed atomically at [ADDRESS] only — hook bodies, predecessor slots, installer edges, preference publication, and the three verified CAML setter seams keep working exactly as before.
+- `no-glyph-replacement` — no non-CAML hook can replace a module glyph: no glyph-setter write exists in source, and the header-glyph selector's remaining hook is the observer-only diagnostic seam (removed atomically at M2 only — hook bodies, predecessor slots, installer edges, preference publication, and the three verified CAML setter seams keep working exactly as before.
 - `catalog-stock-boundary` — the generated M0 Q0 catalog is byte-identical to accepted base `7f8a314`, activation is empty, and every static/Flashlight catalog capability resolves stock-only.
 - `cutover-boundary` — `docs/M1-STATIC-SUBTRACTION-CUTOVER.md` states the verified-stock installation boundary (verified stock SpringBoard state; separately authorized clean SpringBoard restart + stock verification; no device action in this milestone).
 
@@ -26,7 +26,7 @@ byte-identical M0 catalog. Sources: `src/Tweak.xm`, `src/CAMLDiagnostic.*`,
 
 Preconditions:
 
-- Repo root as CWD on the Linux host ([ADDRESS], bun).
+- Repo root as CWD on the Linux host (python3, bun).
 - `git status --porcelain` shows exactly the intended diff.
 
 - **Deletion + preservation.** (User action: the whole surface above.) Run `python3 -B tests/m1-static-subtraction-contract.py`. One PASS line, exit 0. It asserts the full removal inventory is absent from production source, no non-CAML hook can replace a module glyph, overlay wallpaper/presentation and the CAML route keep hooks/predecessor slots/installer edges, the M0 Q0 catalog is byte-identical with empty activation and stock-only static/Flashlight routes, the cutover note carries the installation boundary, and the gate wiring/count is coherent.
@@ -35,7 +35,7 @@ Preconditions:
 ## Gotchas
 
 - The M0 generated tables (`src/generated/`) legitimately name `FlashlightOn`/`FlashlightOff` as stock aliases; the absence scan covers hand-written source only, and the generated tables are separately gated as byte-identical to base.
-- The header-glyph **diagnostic observer** (site 7) is not a substitution hook: it forwards unchanged and is removed atomically at [ADDRESS] five non-setter diagnostic interceptors. Do not delete it in an M1 change.
+- The header-glyph **diagnostic observer** (site 7) is not a substitution hook: it forwards unchanged and is removed atomically at M2 with the five non-setter diagnostic interceptors. Do not delete it in an M1 change.
 - Staged Flashlight/Icon PNGs remain inert package payload (mirror-checked by `tests/assets-contract.py`); nothing loads them after M1.
 - Host gates prove source shape and catalog state — not UIKit rendering or installation.
 

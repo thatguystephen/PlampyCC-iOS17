@@ -42,7 +42,7 @@ static BOOL HasMethod(Class cls, SEL sel) { return cls && class_getInstanceMetho
 static id Call(id obj, SEL sel) { return obj && [obj respondsToSelector:sel] ? ((id(*)(id, SEL))objc_msgSend)(obj, sel) : nil; }
 
 static NSString *ThemeFile(NSString *relativePath) {
-    for (NSString *root in [ADDRESS]()) {
+    for (NSString *root in AssetRoots()) {
         NSString *candidate = [[root stringByAppendingPathComponent:ThemeName()]
             stringByAppendingPathComponent:relativePath];
         if ([[NSFileManager defaultManager] fileExistsAtPath:candidate]) return candidate;

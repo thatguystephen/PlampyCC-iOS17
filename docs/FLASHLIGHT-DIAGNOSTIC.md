@@ -75,7 +75,8 @@ The corrected path contract:
   effective (mobile) user; the mobile-owned form may be group-writable
   (observed `mobile:mobile 0755` and `0775` chains) but is never
   world-writable; a root-owned prefix must have no group/world write.
-- Owned suffix: `PlampyCC/CAML-Diagnostic`, walked [ADDRESS]  descriptor-confined: every component opened relative to the held
+- Owned suffix: `PlampyCC/CAML-Diagnostic`, walked strictly
+  descriptor-confined: every component opened relative to the held
   descriptor with `O_NOFOLLOW`, created `0700` when absent, owner must be
   the effective user, intermediates never group/world-writable
   (`(mode & 0022) == 0`), leaf exactly `0700`, event files `0600`.
@@ -118,7 +119,7 @@ image and point size, no replacement is constructed, and the recorder stays
 compile-time disabled outside collector builds. (M1 removed the substitution
 hook that used to chain on this seam; the observer itself is a shipping
 diagnostic interceptor and is removed atomically with the other non-setter
-diagnostic interceptors at [ADDRESS], not here.)
+diagnostic interceptors at M2, not here.)
 
 Static basis (21D50 inputs, read-only `strings` / `ipsw macho disass`; no
 device):
@@ -132,7 +133,8 @@ device):
   setHeaderGlyphImage:unscaledSymbolPointSize:]`; its prologue keeps the point
   size in `d0` (`fmov d8, d0`), so the compiled ABI shape is the object plus
   64-bit `CGFloat` form `v32@0:8@16d24`. The site installer re-verifies that
-  shape against the runtime encoding (`ABIShapeMatches`) and refuses the [ADDRESS]  on any mismatch, recording the refusal like every other site.
+  shape against the runtime encoding (`ABIShapeMatches`) and refuses the hook
+  on any mismatch, recording the refusal like every other site.
 - `FlashlightModule` ships the two stock level symbols `flashlight.off.fill`
   and `flashlight.on.fill` — the `systemImageNamed:withConfiguration:` inputs
   of `_updateGlyphForFlashlightLevel:`. They are the comparison constants for
@@ -164,7 +166,8 @@ identical to a freshly requested stock reference (`flashlight.off.fill` and
 `flashlight.on.fill`, default or point-size configuration) is `hdr-stock`; a locally extracted symbol
 name equal to a stock symbol is `hdr-stock`, and a different extracted symbol
 name is `hdr-other`; an image that carries no symbol configuration is
-`hdr-other` (the stock level glyphs are always SF Symbol images); anything [ADDRESS] cannot decide safely is `hdr-unclass`. The symbol name is compared
+`hdr-other` (the stock level glyphs are always SF Symbol images); anything the
+comparison cannot decide safely is `hdr-unclass`. The symbol name is compared
 locally and never recorded.
 
 Observation rule: expand the Flashlight module once with a collector build

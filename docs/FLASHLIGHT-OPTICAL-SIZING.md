@@ -1,14 +1,16 @@
 # Flashlight compact optical sizing
 
 Task: t_99f371b1. Baseline: `d0e77a9b62d0f1388827531420bda762753cdb73`.
-Status: implemented candidate, local contracts verified; NOT device-accepted.
+Status: historical record only — the implementation was deleted at M1 (see M1 status below); it was never device-accepted.
 
 **M1 status (static-substitution subtraction).** The optical policy
 (`src/FlashlightOpticalPolicy.hpp`, `SizedGlyphArt`/`SizedCompactGlyphArt`,
 and `kCompactScale`) was removed with the whole static substitution surface at
 M1; Flashlight glyphs are stock by construction and the measured sizing below
 is a historical measurement record only. See
-`docs/M1-STATIC-SUBTRACTION-CUTOVER.md`.
+`docs/M1-STATIC-SUBTRACTION-CUTOVER.md`. Superseded by M1: every test named
+below that lived under `tests/` was deleted with the policy; the current
+host gate is `tests/m1-static-subtraction-contract.py`.
 
 ## Scope and evidence boundary
 
@@ -26,7 +28,8 @@ fixed. Rollback is the exact baseline, not earlier reversed-state candidates.
 
 Input: `/mnt/truenas/IMG_1095.JPG`, 1107x276.
 SHA256: `00f277b2c418bdd584cf7b1e8a6ff1a0f18d5d671a3e1819a51b0fa10a6b2495`.
-Replay: `sh tests/measure-flashlight-optics.sh /mnt/truenas/IMG_1095.JPG`.
+Replay (historical; `tests/measure-flashlight-optics.sh` was deleted at M1):
+`sh tests/measure-flashlight-optics.sh /mnt/truenas/IMG_1095.JPG`.
 ImageMagick trims each declared crop against its corner background. Bounds are
 half-open, in original screenshot pixels. Whole themed silhouettes (including
 power/VPN background shapes), not just white/text strokes, are the peers.
@@ -84,7 +87,7 @@ symbol disassembly aborted in ipsw getHeaderInfoRO with an allocation error.
 Bounded address disassembly plus selector references succeeded instead. These
 are analysis-tool failures, not SpringBoard failures.
 
-## Policy comparison and decision
+## Policy comparison and decision (historical — policy deleted at M1)
 
 1. Median peer height: 62/52 = 1.19231. Conservative and viable, but horizontally
    broad battery/VPN peers bias this height statistic downward; the slender
@@ -100,7 +103,7 @@ are analysis-tool failures, not SpringBoard failures.
    envelope. Full alpha/contrast mass normalization would need more data and
    complexity than this bounded correction warrants.
 
-The named compile-time `flashlight_optical::kCompactScale` is 79/52, bounded by
+The named compile-time `flashlight_optical::kCompactScale` was 79/52, bounded by
 73/53 through 80/51 (1.377358491–1.568627451), using peer extent and measured
 flashlight boundary uncertainty. These are a calibration envelope, NOT general
 accessibility/device-size limits. The factor is not a preference and cannot
@@ -109,7 +112,7 @@ same Flashlight art via the existing Pulsar fallback; no arbitrary theme files
 or future artwork are claimed calibrated. Header remains factor 1.0. No views,
 frames, Assets.car, symbols, module routing or PNGs are changed.
 
-## Integration invariants
+## Integration invariants (historical — implementation deleted at M1)
 
 The renderer caches by theme, art, source canvas and optical factor. Every
 render retains its unscaled source canvas in a private UIImage association.
@@ -126,19 +129,24 @@ Nonfinite incoming dimensions now fail open rather than creating an invalid
 context. Source-canvas identity relies on UIKit retaining the image object;
 copying/transforming it and dropping associations is an explicit device risk.
 
-## Verification and remaining gates
+## Verification and remaining gates (historical — deleted gates are marked)
 
 Red source contract before integration: `python3 -B tests/flashlight-optical-contract.py`
-failed with `AssertionError: optical policy not integrated`. This supplements,
-not replaces, the actual screenshot red evidence.
+failed with `AssertionError: optical policy not integrated`. This supplemented,
+not replaced, the actual screenshot red evidence. (That gate was deleted at
+M1.)
 
-Green local suite (all exit zero):
+Green local suite at the time (all exit zero; entries marked *deleted at M1*
+no longer exist):
 
-- icon-cache-contract.py; flashlight-optical-contract.py (compiles/runs native
-  production constant bounds and a labelled feedback model); prefs-arc-contract.py
+- icon-cache-contract.py *(deleted at M1)*; flashlight-optical-contract.py
+  *(deleted at M1)* (compiled and ran the native production constant bounds
+  and a labelled feedback model); prefs-arc-contract.py
 - caml-diagnostic-contract.py (native policies); glyph-trace-contract.py
+  *(deleted at M1)*
 - signature-contract.py (fixtures, NOT a newly built package)
-- flashlight-asset-contract.py; assets-contract.py (81 CAML references)
+- flashlight-asset-contract.py *(deleted at M1)*; assets-contract.py (81 CAML
+  references)
 - manifest-contract.py; caml-diagnostic-output.py (native directory policies)
 - rejected-regression.py; `bun tests/static-check.ts`; `git diff --check`
 
@@ -147,12 +155,14 @@ baseline content: tests/static-check.ts:40, prefs/Makefile:13 (logical Theos
 install paths), and src/CAMLDiagnostic.xm:255-257 (comments describing rootless
 rewriting). It additionally warns about existing Preferences imports. These
 are not silently counted as passing; the repository-specific rootless/static
-contracts pass and no flagged file was changed. The new optical test is wired
-into the existing macOS workflow without changing toolchain/provenance pins.
+contracts pass and no flagged file was changed. At the time, the new optical
+test was wired into the macOS workflow without changing toolchain/provenance
+pins; it was deleted with the optical policy at M1, and the workflow now runs
+`tests/m1-static-subtraction-contract.py`.
 No new UIKit/arm64e package build or twelve-gate package verification was run
 in this Linux/local-only phase. No native model is claimed to execute UIKit.
 
-Required device matrix after independent review and an authorized exact-SHA build:
+Required device matrix at the time (historical — the optical feature was deleted at M1 before any device run):
 
 | Surface/action | Required result | Current evidence |
 |---|---|---|
