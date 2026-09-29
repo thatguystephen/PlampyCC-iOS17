@@ -65,6 +65,10 @@ jobs:
           python3 -B tests/prefs-arc-contract.py
           python3 -B tests/caml-diagnostic-contract.py
           python3 -B tests/glyph-trace-contract.py
+          bun tests/theme-manifest-parity.ts
+          bun tests/theme-catalog-generation.ts
+          bun tests/theme-catalog-validation.ts
+          bun tools/theme-catalog/generate.ts --check
           bun tests/static-check.ts
           python3 -B tests/signature-contract.py
           # Build the exact release binary once without stripping. The package is

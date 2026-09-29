@@ -1,0 +1,700 @@
+{
+  "schema": "plampycc-21d50-canonical-manifest-seed/v1",
+  "source_sha256": "d1d990e14cbbb683cfd5a42a924ec1839303e1cc4499bf0c976e89c9aabd9919",
+  "target": {
+    "device": "iPhone15,2",
+    "os_version": "iOS 17.3",
+    "build": "21D50"
+  },
+  "modules": [
+    {
+      "identity": "AccessibilityGuidedAccessControlCenterModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [],
+          "assets_exist": false,
+          "contents_inspected": false,
+          "reference_status": "not_applicable",
+          "routing_status": "not_applicable",
+          "disposition": "missing_asset_stock"
+        }
+      ]
+    },
+    {
+      "identity": "AccessibilityShorcutsModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [
+            "AccessibilityIcon"
+          ],
+          "asset_paths": [
+            "AccessibilityShorcutsModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "AccessibilitySoundDetectionControlCenterModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [],
+          "assets_exist": false,
+          "contents_inspected": false,
+          "reference_status": "not_applicable",
+          "routing_status": "not_applicable",
+          "disposition": "missing_asset_stock"
+        }
+      ]
+    },
+    {
+      "identity": "AccessibilityTextSizeModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [],
+          "assets_exist": false,
+          "contents_inspected": false,
+          "reference_status": "not_applicable",
+          "routing_status": "not_applicable",
+          "disposition": "missing_asset_stock"
+        }
+      ]
+    },
+    {
+      "identity": "AirPlayMirroringModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "MPAVScreenMirroring"
+          ],
+          "asset_paths": [
+            "AirPlayMirroringModule.bundle/MPAVScreenMirroring.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "AlarmModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [
+            "AlarmModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "AppearanceModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "StyleMode"
+          ],
+          "asset_paths": [
+            "AppearanceModule.bundle/StyleMode.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "CalculatorModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [
+            "Calculator"
+          ],
+          "asset_paths": [
+            "CalculatorModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "CameraModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [
+            "Camera"
+          ],
+          "asset_paths": [
+            "CameraModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "ConnectivityModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "Bluetooth",
+            "WiFi"
+          ],
+          "asset_paths": [
+            "ConnectivityModule.bundle/Bluetooth.ca",
+            "ConnectivityModule.bundle/WiFi.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        },
+        {
+          "local": 1,
+          "evidence_type": "static_png",
+          "names": [
+            "AirplaneGlyph",
+            "CellularDataGlyph",
+            "AirDropGlyph",
+            "HotspotGlyph"
+          ],
+          "asset_paths": [
+            "ConnectivityModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unresolved_catalog_stock"
+        }
+      ]
+    },
+    {
+      "identity": "DisplayModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "Brightness"
+          ],
+          "asset_paths": [
+            "DisplayModule.bundle/Brightness.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        },
+        {
+          "local": 1,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [
+            "DisplayModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unresolved_catalog_stock"
+        }
+      ]
+    },
+    {
+      "identity": "FlashlightModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "static_png",
+          "names": [
+            "FlashlightOn",
+            "FlashlightOff"
+          ],
+          "asset_paths": [
+            "FlashlightModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unresolved_catalog_stock"
+        }
+      ]
+    },
+    {
+      "identity": "FocusUI",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "dnd_cg_02"
+          ],
+          "asset_paths": [
+            "FocusUI.framework/dnd_cg_02.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "HearingAidsModule",
+      "renderer_evidence_status": "inferred",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "HAE_1_x_1"
+          ],
+          "asset_paths": [
+            "HearingAidsModule.bundle/HAE_1_x_1.ca"
+          ],
+          "assets_exist": false,
+          "contents_inspected": false,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "missing_asset_stock"
+        }
+      ]
+    },
+    {
+      "identity": "LowPowerModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "LowPower",
+            "LowPower-light",
+            "LowPower_IC",
+            "LowPower_IC-light"
+          ],
+          "asset_paths": [
+            "LowPowerModule.bundle/LowPower.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "MagnifierModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [
+            "Magnifier"
+          ],
+          "asset_paths": [
+            "MagnifierModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "MediaControls",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "Volume",
+            "PlayPauseStop",
+            "ForwardBackward",
+            "Mirroring",
+            "MirroringNonAnimated",
+            "AirPlayControlAudioDark",
+            "AirPlayControlAudioLight"
+          ],
+          "asset_paths": [
+            "MediaControls.framework/Volume.ca",
+            "MediaControls.framework/PlayPauseStop.ca",
+            "MediaControls.framework/ForwardBackward.ca",
+            "MediaControls.framework/Mirroring.ca",
+            "MediaControls.framework/MirroringNonAnimated.ca",
+            "MediaControls.framework/AirPlayControlAudioDark.ca",
+            "MediaControls.framework/AirPlayControlAudioLight.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "MuteModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "Mute"
+          ],
+          "asset_paths": [
+            "MuteModule.bundle/Mute.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "NFCControlCenterModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [
+            "NFCControlCenterModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "OrientationLockModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "OrientationLock"
+          ],
+          "asset_paths": [
+            "OrientationLockModule.bundle/OrientationLock.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "PerformanceTraceModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [],
+          "assets_exist": false,
+          "contents_inspected": false,
+          "reference_status": "not_applicable",
+          "routing_status": "not_applicable",
+          "disposition": "missing_asset_stock"
+        }
+      ]
+    },
+    {
+      "identity": "QRCodeModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [
+            "QRCode"
+          ],
+          "asset_paths": [
+            "QRCodeModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "ReplayKitModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "replaykit",
+            "replaykit-v2"
+          ],
+          "asset_paths": [
+            "ReplayKitModule.bundle/replaykit.ca",
+            "ReplayKitModule.bundle/replaykit-v2.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "ShazamModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "Shazam"
+          ],
+          "asset_paths": [
+            "ShazamModule.bundle/Shazam.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "SpringBoard_Ringer",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "Ringer-Leading-D73",
+            "Ringer-Minimal-D73"
+          ],
+          "asset_paths": [
+            "SpringBoard.framework/Ringer-Leading-D73.ca",
+            "SpringBoard.framework/Ringer-Minimal-D73.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "StopwatchModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [
+            "StopwatchModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "TimerModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "animated_caml",
+          "names": [
+            "timer"
+          ],
+          "asset_paths": [
+            "TimerModule.bundle/timer.ca"
+          ],
+          "assets_exist": true,
+          "contents_inspected": true,
+          "reference_status": "not_applicable",
+          "routing_status": "configured",
+          "disposition": "verified_asset_candidate"
+        }
+      ]
+    },
+    {
+      "identity": "TVRemoteModule",
+      "renderer_evidence_status": "verified",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "static_png",
+          "names": [
+            "ModuleIcon"
+          ],
+          "asset_paths": [
+            "TVRemoteModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unresolved_catalog_stock"
+        }
+      ]
+    },
+    {
+      "identity": "VoiceMemosModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [
+            "VoiceMemos"
+          ],
+          "asset_paths": [
+            "VoiceMemosModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    },
+    {
+      "identity": "WalletModule",
+      "renderer_evidence_status": "unknown",
+      "safe_default": "stock",
+      "capabilities": [
+        {
+          "local": 0,
+          "evidence_type": "unknown",
+          "names": [],
+          "asset_paths": [
+            "WalletModule.bundle/Assets.car"
+          ],
+          "assets_exist": true,
+          "contents_inspected": false,
+          "reference_status": "not_inspectable",
+          "routing_status": "not_configured",
+          "disposition": "unknown_renderer_stock"
+        }
+      ]
+    }
+  ]
+}

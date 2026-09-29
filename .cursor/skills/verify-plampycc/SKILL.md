@@ -49,10 +49,14 @@ python3 -B tests/flashlight-optical-contract.py
 python3 -B tests/flashlight-asset-contract.py
 python3 -B tests/prefs-arc-contract.py
 bun tests/static-check.ts
+bun tests/theme-manifest-parity.ts
+bun tests/theme-catalog-generation.ts
+bun tests/theme-catalog-validation.ts
+bun tools/theme-catalog/generate.ts --check
 bun /home/steph/.hermes/skills/software-development/theos-package-build/scripts/inspect-project.ts . --json
 ```
 
-Healthy when: all twelve gate commands exit 0 and their PASS lines are captured; `inspect-project.ts` reports no violations beyond the documented baseline below (warnings do not block); `git status --porcelain` shows exactly the intended diff — a working tree that differs from the change under review invalidates the run.
+Healthy when: all sixteen gate commands exit 0 and their PASS lines are captured; `inspect-project.ts` reports no violations beyond the documented baseline below (warnings do not block); `git status --porcelain` shows exactly the intended diff — a working tree that differs from the change under review invalidates the run.
 
 Known inspector baseline (heuristic false positives of `inspect-project.ts`'s rootful-path scan against this repo's pinned contract; any other violation is a real finding):
 
@@ -61,7 +65,7 @@ Known inspector baseline (heuristic false positives of `inspect-project.ts`'s ro
 - `ROOTFUL_PATH` at `prefs/Makefile:13` (`PlampyCC_INSTALL_PATH = /Library/PreferenceBundles`) — the logical path Theos's rootless scheme rewrites under `/var/jb`; `tests/static-check.ts` requires it verbatim (a second `/var/jb` prefix is the defect), and the verified package proves the rewrite (`./var/jb/Library/PreferenceBundles/...`).
 - `PRIVATE_FRAMEWORK_IMPORT` warnings at `prefs/RootListController.m:2-3` (`Preferences/PSListController.h`, `Preferences/PSSpecifier.h`) — warnings only, non-blocking.
 
-The Python gates compile and run the native C++ policies themselves (`g++`/`c++`): `caml-diagnostic-contract.py` builds `tests/native-caml-diagnostic.cpp`, `caml-diagnostic-output.py` builds `tests/native-caml-directory-walk.cpp`, `flashlight-optical-contract.py` builds `tests/native-flashlight-optical.cpp`. There is no separate native step and no host-side package build — the arm64e ABI requires the pinned macOS CI boundary.
+The Python gates compile and run the native C++ policies themselves (`g++`/`c++`): `caml-diagnostic-contract.py` builds `tests/native-caml-diagnostic.cpp`, `caml-diagnostic-output.py` builds `tests/native-caml-directory-walk.cpp`, `flashlight-optical-contract.py` builds `tests/native-flashlight-optical.cpp`. The theme-catalog generation gate follows the same self-compile pattern (`tests/theme-catalog-generation.ts` builds `tests/native-theme-catalog.cpp`). There is no separate native step and no host-side package build — the arm64e ABI requires the pinned macOS CI boundary.
 
 ## Drive
 
@@ -72,6 +76,7 @@ Map the change to its feature file(s) in `features/` (index: `features/README.md
 - Diagnostic recorder/admission/output → `features/caml-diagnostic-recorder.md`
 - Packaging, signatures, manifest, staged assets → `features/package-integrity.md`
 - Preference bundle/registration → `features/prefs-and-registration.md`
+- Theme catalog / M0 manifest / generated stock catalog → `features/theme-catalog.md`
 
 A change spanning several surfaces runs each map; docs/cleanup-only changes run the cross-cutting suite once. Completion: every touched surface has a map.
 

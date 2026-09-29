@@ -1,0 +1,1392 @@
+{
+  "schema": "plampycc-theme-catalog/v1",
+  "generator": "tools/theme-catalog/generate.ts",
+  "target": {
+    "productType": "iPhone15,2",
+    "productVersion": "17.3",
+    "build": "21D50"
+  },
+  "seed": {
+    "file": "manifest/21d50-canonical-manifest-seed.json",
+    "sha256": "63252e96ade77361484a75eade500bc7a653965ead644f11eaffe02cc2a7ef99",
+    "sourceSha256": "d1d990e14cbbb683cfd5a42a924ec1839303e1cc4499bf0c976e89c9aabd9919"
+  },
+  "counts": {
+    "modules": 30,
+    "capabilities": 32,
+    "eligible": 13,
+    "stockOnly": 19
+  },
+  "selectedStage": {
+    "name": "Q0",
+    "activeCapabilities": []
+  },
+  "activationBitset": "0x0000",
+  "catalogDigest": "sha256:3db46a408050e5ebe049e5b5c47fc88e3238839f54ac36d71e78cb4fd20d1e86",
+  "activationSetDigest": "sha256:981d0756069a210c9202d3737c61ee1759da73b0a2890b8fed0f8b7ec9efedc3",
+  "stageCardinality": {
+    "Q0": 0,
+    "A1": 1,
+    "A2": 4,
+    "A3": 13,
+    "R1": 13
+  },
+  "modules": [
+    {
+      "id": "AccessibilityGuidedAccessControlCenterModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "accessibility-guided-access"
+      ]
+    },
+    {
+      "id": "AccessibilityShorcutsModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "accessibility-shortcuts"
+      ]
+    },
+    {
+      "id": "AccessibilitySoundDetectionControlCenterModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "accessibility-sound-detection"
+      ]
+    },
+    {
+      "id": "AccessibilityTextSizeModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "accessibility-text-size"
+      ]
+    },
+    {
+      "id": "AirPlayMirroringModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "airplay-mirroring"
+      ]
+    },
+    {
+      "id": "AlarmModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "alarm"
+      ]
+    },
+    {
+      "id": "AppearanceModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "appearance"
+      ]
+    },
+    {
+      "id": "CalculatorModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "calculator"
+      ]
+    },
+    {
+      "id": "CameraModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "camera"
+      ]
+    },
+    {
+      "id": "ConnectivityModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "connectivity-caml",
+        "connectivity-glyphs"
+      ]
+    },
+    {
+      "id": "DisplayModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "display-brightness",
+        "display-catalog"
+      ]
+    },
+    {
+      "id": "FlashlightModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "flashlight"
+      ]
+    },
+    {
+      "id": "FocusUI",
+      "safeDefault": "stock",
+      "capabilities": [
+        "focus"
+      ]
+    },
+    {
+      "id": "HearingAidsModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "hearing-aids"
+      ]
+    },
+    {
+      "id": "LowPowerModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "low-power"
+      ]
+    },
+    {
+      "id": "MagnifierModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "magnifier"
+      ]
+    },
+    {
+      "id": "MediaControls",
+      "safeDefault": "stock",
+      "capabilities": [
+        "media-controls-volume"
+      ]
+    },
+    {
+      "id": "MuteModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "mute"
+      ]
+    },
+    {
+      "id": "NFCControlCenterModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "nfc"
+      ]
+    },
+    {
+      "id": "OrientationLockModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "orientation-lock"
+      ]
+    },
+    {
+      "id": "PerformanceTraceModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "performance-trace"
+      ]
+    },
+    {
+      "id": "QRCodeModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "qr-code"
+      ]
+    },
+    {
+      "id": "ReplayKitModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "replaykit"
+      ]
+    },
+    {
+      "id": "ShazamModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "shazam"
+      ]
+    },
+    {
+      "id": "SpringBoard_Ringer",
+      "safeDefault": "stock",
+      "capabilities": [
+        "springboard-ringer"
+      ]
+    },
+    {
+      "id": "StopwatchModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "stopwatch"
+      ]
+    },
+    {
+      "id": "TimerModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "timer"
+      ]
+    },
+    {
+      "id": "TVRemoteModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "tv-remote"
+      ]
+    },
+    {
+      "id": "VoiceMemosModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "voice-memos"
+      ]
+    },
+    {
+      "id": "WalletModule",
+      "safeDefault": "stock",
+      "capabilities": [
+        "wallet"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "ordinal": 0,
+      "id": "accessibility-guided-access",
+      "module": "AccessibilityGuidedAccessControlCenterModule",
+      "localIndex": 0,
+      "tag": 2967212487,
+      "tagHex": "0xb0dc11c7u",
+      "disposition": "stock-only-missing",
+      "seedDisposition": "missing_asset_stock",
+      "rendererFamily": null,
+      "hostForm": "unknown-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 1,
+      "id": "accessibility-shortcuts",
+      "module": "AccessibilityShorcutsModule",
+      "localIndex": 0,
+      "tag": 3285110073,
+      "tagHex": "0xc3cecd39u",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "expansion-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "AccessibilityIcon"
+      ],
+      "stockAssets": [
+        "AccessibilityShorcutsModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "list"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 2,
+      "id": "accessibility-sound-detection",
+      "module": "AccessibilitySoundDetectionControlCenterModule",
+      "localIndex": 0,
+      "tag": 1437081475,
+      "tagHex": "0x55a81f83u",
+      "disposition": "stock-only-missing",
+      "seedDisposition": "missing_asset_stock",
+      "rendererFamily": null,
+      "hostForm": "unknown-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 3,
+      "id": "accessibility-text-size",
+      "module": "AccessibilityTextSizeModule",
+      "localIndex": 0,
+      "tag": 3368669129,
+      "tagHex": "0xc8c9cfc9u",
+      "disposition": "stock-only-missing",
+      "seedDisposition": "missing_asset_stock",
+      "rendererFamily": null,
+      "hostForm": "slider-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 4,
+      "id": "airplay-mirroring",
+      "module": "AirPlayMirroringModule",
+      "localIndex": 0,
+      "tag": 3605791533,
+      "tagHex": "0xd6ec032du",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "MPAVScreenMirroring"
+      ],
+      "stockAssets": [
+        "AirPlayMirroringModule.bundle/MPAVScreenMirroring.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "MPAVScreenMirroring",
+          "bundleDir": "AirPlayMirroringModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/AirPlayMirroringModule.bundle/MPAVScreenMirroring.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "off",
+          "on"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 5,
+      "id": "alarm",
+      "module": "AlarmModule",
+      "localIndex": 0,
+      "tag": 434891994,
+      "tagHex": "0x19ebecdau",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [
+        "AlarmModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 6,
+      "id": "appearance",
+      "module": "AppearanceModule",
+      "localIndex": 0,
+      "tag": 3994141567,
+      "tagHex": "0xee11c37fu",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "StyleMode"
+      ],
+      "stockAssets": [
+        "AppearanceModule.bundle/StyleMode.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "StyleMode",
+          "bundleDir": "AppearanceModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/AppearanceModule.bundle/StyleMode.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "light",
+          "dark"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 7,
+      "id": "calculator",
+      "module": "CalculatorModule",
+      "localIndex": 0,
+      "tag": 3311066957,
+      "tagHex": "0xc55adf4du",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "Calculator"
+      ],
+      "stockAssets": [
+        "CalculatorModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 8,
+      "id": "camera",
+      "module": "CameraModule",
+      "localIndex": 0,
+      "tag": 2663290958,
+      "tagHex": "0x9ebe984eu",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "Camera"
+      ],
+      "stockAssets": [
+        "CameraModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 9,
+      "id": "connectivity-caml",
+      "module": "ConnectivityModule",
+      "localIndex": 0,
+      "tag": 3600563992,
+      "tagHex": "0xd69c3f18u",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "expansion-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "Bluetooth",
+        "WiFi"
+      ],
+      "stockAssets": [
+        "ConnectivityModule.bundle/Bluetooth.ca",
+        "ConnectivityModule.bundle/WiFi.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "Bluetooth",
+          "bundleDir": "ConnectivityModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/ConnectivityModule.bundle/Bluetooth.ca/main.caml"
+        },
+        {
+          "packageName": "WiFi",
+          "bundleDir": "ConnectivityModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/ConnectivityModule.bundle/WiFi.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "inactive",
+          "active"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 10,
+      "id": "connectivity-glyphs",
+      "module": "ConnectivityModule",
+      "localIndex": 1,
+      "tag": 1777360170,
+      "tagHex": "0x69f05d2au",
+      "disposition": "stock-only-static",
+      "seedDisposition": "unresolved_catalog_stock",
+      "rendererFamily": null,
+      "hostForm": "expansion-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "AirplaneGlyph",
+        "CellularDataGlyph",
+        "AirDropGlyph",
+        "HotspotGlyph"
+      ],
+      "stockAssets": [
+        "ConnectivityModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "visible"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 11,
+      "id": "display-brightness",
+      "module": "DisplayModule",
+      "localIndex": 0,
+      "tag": 4176285423,
+      "tagHex": "0xf8ed0eefu",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "slider-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "Brightness"
+      ],
+      "stockAssets": [
+        "DisplayModule.bundle/Brightness.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "Brightness",
+          "bundleDir": "DisplayModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/DisplayModule.bundle/Brightness.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "low",
+          "high"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 12,
+      "id": "display-catalog",
+      "module": "DisplayModule",
+      "localIndex": 1,
+      "tag": 4016487415,
+      "tagHex": "0xef66bbf7u",
+      "disposition": "stock-only-opaque",
+      "seedDisposition": "unresolved_catalog_stock",
+      "rendererFamily": null,
+      "hostForm": "expansion-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [
+        "DisplayModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "visible"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 13,
+      "id": "flashlight",
+      "module": "FlashlightModule",
+      "localIndex": 0,
+      "tag": 3875930387,
+      "tagHex": "0xe7060113u",
+      "disposition": "stock-only-static",
+      "seedDisposition": "unresolved_catalog_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "FlashlightOn",
+        "FlashlightOff"
+      ],
+      "stockAssets": [
+        "FlashlightModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "off",
+          "on"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 14,
+      "id": "focus",
+      "module": "FocusUI",
+      "localIndex": 0,
+      "tag": 337658899,
+      "tagHex": "0x14204413u",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "dnd_cg_02"
+      ],
+      "stockAssets": [
+        "FocusUI.framework/dnd_cg_02.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "dnd_cg_02",
+          "bundleDir": "FocusUI.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/FocusUI.framework/dnd_cg_02.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "off",
+          "on"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 15,
+      "id": "hearing-aids",
+      "module": "HearingAidsModule",
+      "localIndex": 0,
+      "tag": 2210373597,
+      "tagHex": "0x83bf9fddu",
+      "disposition": "stock-only-inferred",
+      "seedDisposition": "missing_asset_stock",
+      "rendererFamily": null,
+      "hostForm": "unknown-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "HAE_1_x_1"
+      ],
+      "stockAssets": [
+        "HearingAidsModule.bundle/HAE_1_x_1.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 16,
+      "id": "low-power",
+      "module": "LowPowerModule",
+      "localIndex": 0,
+      "tag": 717110221,
+      "tagHex": "0x2abe3bcdu",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "LowPower",
+        "LowPower-light",
+        "LowPower_IC",
+        "LowPower_IC-light"
+      ],
+      "stockAssets": [
+        "LowPowerModule.bundle/LowPower.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "LowPower",
+          "bundleDir": "LowPowerModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/LowPowerModule.bundle/LowPower.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "off",
+          "on"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 17,
+      "id": "magnifier",
+      "module": "MagnifierModule",
+      "localIndex": 0,
+      "tag": 1827606247,
+      "tagHex": "0x6cef0ee7u",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "Magnifier"
+      ],
+      "stockAssets": [
+        "MagnifierModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 18,
+      "id": "media-controls-volume",
+      "module": "MediaControls",
+      "localIndex": 0,
+      "tag": 3160682021,
+      "tagHex": "0xbc642e25u",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "slider-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "Volume",
+        "PlayPauseStop",
+        "ForwardBackward",
+        "Mirroring",
+        "MirroringNonAnimated",
+        "AirPlayControlAudioDark",
+        "AirPlayControlAudioLight"
+      ],
+      "stockAssets": [
+        "MediaControls.framework/Volume.ca",
+        "MediaControls.framework/PlayPauseStop.ca",
+        "MediaControls.framework/ForwardBackward.ca",
+        "MediaControls.framework/Mirroring.ca",
+        "MediaControls.framework/MirroringNonAnimated.ca",
+        "MediaControls.framework/AirPlayControlAudioDark.ca",
+        "MediaControls.framework/AirPlayControlAudioLight.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "Volume",
+          "bundleDir": "MediaControls.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MediaControls.framework/Volume.ca/main.caml"
+        },
+        {
+          "packageName": "PlayPauseStop",
+          "bundleDir": "MediaControls.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MediaControls.framework/PlayPauseStop.ca/main.caml"
+        },
+        {
+          "packageName": "ForwardBackward",
+          "bundleDir": "MediaControls.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MediaControls.framework/ForwardBackward.ca/main.caml"
+        },
+        {
+          "packageName": "Mirroring",
+          "bundleDir": "MediaControls.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MediaControls.framework/Mirroring.ca/main.caml"
+        },
+        {
+          "packageName": "MirroringNonAnimated",
+          "bundleDir": "MediaControls.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MediaControls.framework/MirroringNonAnimated.ca/main.caml"
+        },
+        {
+          "packageName": "AirPlayControlAudioDark",
+          "bundleDir": "MediaControls.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MediaControls.framework/AirPlayControlAudioDark.ca/main.caml"
+        },
+        {
+          "packageName": "AirPlayControlAudioLight",
+          "bundleDir": "MediaControls.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MediaControls.framework/AirPlayControlAudioLight.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "low",
+          "high"
+        ],
+        "presentations": [
+          "compact",
+          "expanded"
+        ]
+      }
+    },
+    {
+      "ordinal": 19,
+      "id": "mute",
+      "module": "MuteModule",
+      "localIndex": 0,
+      "tag": 3590758228,
+      "tagHex": "0xd6069f54u",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "Mute"
+      ],
+      "stockAssets": [
+        "MuteModule.bundle/Mute.ca"
+      ],
+      "aliasDisambiguation": {
+        "alias": "Mute",
+        "resolution": "MuteModule.bundle",
+        "rationale": "package stem Mute exists under both MuteModule.bundle and SpringBoard.framework; the module-identity match selects MuteModule.bundle (see CAMLReplacementCore.hpp kPackageBundles)"
+      },
+      "routes": [
+        {
+          "packageName": "Mute",
+          "bundleDir": "MuteModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/MuteModule.bundle/Mute.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "on",
+          "off"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 20,
+      "id": "nfc",
+      "module": "NFCControlCenterModule",
+      "localIndex": 0,
+      "tag": 748705826,
+      "tagHex": "0x2ca05822u",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [
+        "NFCControlCenterModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 21,
+      "id": "orientation-lock",
+      "module": "OrientationLockModule",
+      "localIndex": 0,
+      "tag": 3817029451,
+      "tagHex": "0xe3833f4bu",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "OrientationLock"
+      ],
+      "stockAssets": [
+        "OrientationLockModule.bundle/OrientationLock.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "OrientationLock",
+          "bundleDir": "OrientationLockModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/OrientationLockModule.bundle/OrientationLock.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "unlocked",
+          "locked"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 22,
+      "id": "performance-trace",
+      "module": "PerformanceTraceModule",
+      "localIndex": 0,
+      "tag": 3795765233,
+      "tagHex": "0xe23ec7f1u",
+      "disposition": "stock-only-missing",
+      "seedDisposition": "missing_asset_stock",
+      "rendererFamily": null,
+      "hostForm": "unknown-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 23,
+      "id": "qr-code",
+      "module": "QRCodeModule",
+      "localIndex": 0,
+      "tag": 2043242740,
+      "tagHex": "0x79c968f4u",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "QRCode"
+      ],
+      "stockAssets": [
+        "QRCodeModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 24,
+      "id": "replaykit",
+      "module": "ReplayKitModule",
+      "localIndex": 0,
+      "tag": 202719558,
+      "tagHex": "0x0c154146u",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "replaykit",
+        "replaykit-v2"
+      ],
+      "stockAssets": [
+        "ReplayKitModule.bundle/replaykit.ca",
+        "ReplayKitModule.bundle/replaykit-v2.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "replaykit",
+          "bundleDir": "ReplayKitModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/ReplayKitModule.bundle/replaykit.ca/main.caml"
+        },
+        {
+          "packageName": "replaykit-v2",
+          "bundleDir": "ReplayKitModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/ReplayKitModule.bundle/replaykit-v2.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "idle",
+          "recording"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 25,
+      "id": "shazam",
+      "module": "ShazamModule",
+      "localIndex": 0,
+      "tag": 888136771,
+      "tagHex": "0x34efe443u",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "Shazam"
+      ],
+      "stockAssets": [
+        "ShazamModule.bundle/Shazam.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "Shazam",
+          "bundleDir": "ShazamModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/ShazamModule.bundle/Shazam.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "idle",
+          "listening"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 26,
+      "id": "springboard-ringer",
+      "module": "SpringBoard_Ringer",
+      "localIndex": 0,
+      "tag": 357635838,
+      "tagHex": "0x155116feu",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "Ringer-Leading-D73",
+        "Ringer-Minimal-D73"
+      ],
+      "stockAssets": [
+        "SpringBoard.framework/Ringer-Leading-D73.ca",
+        "SpringBoard.framework/Ringer-Minimal-D73.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "Ringer-Leading-D73",
+          "bundleDir": "SpringBoard.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/SpringBoard.framework/Ringer-Leading-D73.ca/main.caml"
+        },
+        {
+          "packageName": "Ringer-Minimal-D73",
+          "bundleDir": "SpringBoard.framework",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/SpringBoard.framework/Ringer-Minimal-D73.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "on",
+          "off"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 27,
+      "id": "stopwatch",
+      "module": "StopwatchModule",
+      "localIndex": 0,
+      "tag": 2412697032,
+      "tagHex": "0x8fced5c8u",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [
+        "StopwatchModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "idle",
+          "running"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 28,
+      "id": "timer",
+      "module": "TimerModule",
+      "localIndex": 0,
+      "tag": 1550380322,
+      "tagHex": "0x5c68ed22u",
+      "disposition": "eligible",
+      "seedDisposition": "verified_asset_candidate",
+      "rendererFamily": "caml-package-setter",
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": true,
+      "active": false,
+      "stockAliases": [
+        "timer"
+      ],
+      "stockAssets": [
+        "TimerModule.bundle/timer.ca"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [
+        {
+          "packageName": "timer",
+          "bundleDir": "TimerModule.bundle",
+          "requiredAsset": "layout/Library/Application Support/PlampyCC/Plampy/Assets/TimerModule.bundle/timer.ca/main.caml"
+        }
+      ],
+      "deviceVector": {
+        "visibleStates": [
+          "idle",
+          "running"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 29,
+      "id": "tv-remote",
+      "module": "TVRemoteModule",
+      "localIndex": 0,
+      "tag": 1670941012,
+      "tagHex": "0x63988954u",
+      "disposition": "stock-only-static",
+      "seedDisposition": "unresolved_catalog_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "ModuleIcon"
+      ],
+      "stockAssets": [
+        "TVRemoteModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 30,
+      "id": "voice-memos",
+      "module": "VoiceMemosModule",
+      "localIndex": 0,
+      "tag": 44931279,
+      "tagHex": "0x02ad98cfu",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [
+        "VoiceMemos"
+      ],
+      "stockAssets": [
+        "VoiceMemosModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    },
+    {
+      "ordinal": 31,
+      "id": "wallet",
+      "module": "WalletModule",
+      "localIndex": 0,
+      "tag": 2402270636,
+      "tagHex": "0x8f2fbdacu",
+      "disposition": "stock-only-unknown",
+      "seedDisposition": "unknown_renderer_stock",
+      "rendererFamily": null,
+      "hostForm": "button-host",
+      "lifecycleEvidence": null,
+      "activationEligible": false,
+      "active": false,
+      "stockAliases": [],
+      "stockAssets": [
+        "WalletModule.bundle/Assets.car"
+      ],
+      "aliasDisambiguation": null,
+      "routes": [],
+      "deviceVector": {
+        "visibleStates": [
+          "default"
+        ],
+        "presentations": [
+          "compact"
+        ]
+      }
+    }
+  ]
+}

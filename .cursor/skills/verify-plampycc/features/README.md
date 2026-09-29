@@ -11,6 +11,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 | [caml-diagnostic-recorder.md](./caml-diagnostic-recorder.md) | Compile-gated diagnostic event recorder (admission, ring, atomic output) | native diagnostic harness (`python3 -B tests/caml-diagnostic-output.py`) | host contracts (admission, walk, schema); collector output itself is device-only |
 | [package-integrity.md](./package-integrity.md) | Rootless packaging, signatures, manifest/provenance, staged assets | package verifier harness (`bun /home/steph/.hermes/skills/software-development/theos-package-build/scripts/verify-package.ts --json <artifact-dir>`) | verified CI artifact (12 gates); installation is device-only |
 | [prefs-and-registration.md](./prefs-and-registration.md) | Settings preference pane: build discipline and the registration chain | prefs ARC harness (`python3 -B tests/prefs-arc-contract.py`) | host contracts (flags, registration shapes); pane loading is device-only |
+| [theme-catalog.md](./theme-catalog.md) | Canonical Module Identity / Capability catalog, M0 manifest, generated immutable stock catalog | Bun theme-catalog harness (`bun tests/theme-catalog-generation.ts` etc.) | host contracts (validation, generation, parity, extension); lifecycle activation and device vectors are device-only |
 
 ## Baseline preconditions
 
