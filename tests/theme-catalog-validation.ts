@@ -415,6 +415,27 @@ expect("evidence", (copy) => {
   assert(validateSelectorEncoding("v24@0:8@16", "setGlyphPackageDescription:") === null, "valid bind encoding must be accepted");
   assert(validateSelectorEncoding("v16@0:8", "layoutSubviews") === null, "valid 0-arg encoding must be accepted");
 
+  // Return-ABI gate: the lifecycle schema declares the predecessor shape as
+  // void (*)(id, SEL, id), so the return ABI must be void (v). Structurally
+  // valid signatures with any other return category are not evidence.
+  for (const bad of [
+    "i24@0:8@16", // reproduced defect: int return
+    "q24@0:8@16", // long long return
+    "@24@0:8@16", // id return
+    '@"NSString"24@0:8@16', // typed object return
+    "^v24@0:8@16", // pointer-to-void return
+    "B16@0:8", // BOOL return on the 0-arg shape
+    "d16@0:8", // double return on the 0-arg shape
+  ]) {
+    assert(parseMethodEncoding(bad) !== null, `${bad} must remain structurally parseable`);
+    const problem = validateSelectorEncoding(bad, bad === "B16@0:8" || bad === "d16@0:8" ? "layoutSubviews" : "setGlyphPackageDescription:");
+    assert(problem !== null, `accepted wrong-return-ABI encoding ${bad}`);
+    assert(
+      problem!.includes("return ABI") && problem!.includes("conflicts with the typed void predecessor contract"),
+      `wrong-return-ABI encoding ${bad} must fail with the explicit void predecessor contract message (got: ${problem})`,
+    );
+  }
+
   // Scalar/object tokens and bare types are not method signatures.
   for (const bad of ["i", "q", "v", "B", "@\"NSString\"", "@", ":"]) {
     assert(validateSelectorEncoding(bad, "layoutSubviews") !== null, `accepted non-signature encoding ${bad}`);
@@ -447,6 +468,8 @@ expect("evidence", (copy) => {
     copy.lifecycleEvidenceRecords["evidence:low-power"] = record;
     byCapability(copy, "low-power").lifecycleEvidence = "evidence:low-power";
   };
+  expect("evidence", (copy) => setBindEncoding(copy, "i24@0:8@16")); // wrong return ABI (reproduced defect)
+  expect("evidence", (copy) => setBindEncoding(copy, "q24@0:8@16")); // wrong return category
   expect("evidence", (copy) => setBindEncoding(copy, "i")); // scalar-only token
   expect("evidence", (copy) => setBindEncoding(copy, "v24:8@16")); // missing self
   expect("evidence", (copy) => setBindEncoding(copy, "v24@0@16")); // missing _cmd

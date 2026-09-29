@@ -330,14 +330,17 @@ type Fail = (code: ValidationCode, message: string) => void;
 //
 // For the exact lifecycle evidence schema the expected message shape is the
 // typed predecessor-alias shape the typed evidence records declare
-// ("void (*)(id, SEL, id)"): self is id (@0), _cmd is SEL (:8), and every
-// explicit argument is an object (id) in the next 8-byte slot. The typed
-// evidence record's selector name declares the argument shape — one explicit
-// argument per colon — so the encoding's explicit argument count must equal
-// the selector's colon count. Missing self/_cmd positions, selector/encoding
-// arity mismatches, truncated or offset/frame-inconsistent encodings, and
-// plausible-but-wrong explicit argument types (# Class, * char *, : SEL,
-// @? block, scalars, pointers, structs) all fail.
+// ("void (*)(id, SEL, id)"): the return ABI is void (v), self is id (@0),
+// _cmd is SEL (:8), and every explicit argument is an object (id) in the next
+// 8-byte slot. The typed evidence record's selector name declares the
+// argument shape — one explicit argument per colon — so the encoding's
+// explicit argument count must equal the selector's colon count. A wrong
+// return ABI (including structurally valid categories such as i, q, @, B,
+// ^v) conflicts with the typed void predecessor contract and fails, as do
+// missing self/_cmd positions, selector/encoding arity mismatches, truncated
+// or offset/frame-inconsistent encodings, and plausible-but-wrong explicit
+// argument types (# Class, * char *, : SEL, @? block, scalars, pointers,
+// structs).
 //
 // Parser acceptance is static ABI-shape evidence only. It does NOT prove the
 // runtime ABI: that requires device-side method-signature verification (M1,
@@ -459,8 +462,11 @@ export function selectorArgumentCount(name: string): number | null {
 }
 
 // Validate one selector encoding against the selector name the typed evidence
-// record declares. Returns null when the encoding is valid ABI-shape evidence,
-// otherwise the reason it is not.
+// record declares. Lifecycle selector evidence governs the typed void
+// predecessor contract ("void (*)(id, SEL, id)"), so the return ABI must be
+// void (v): a structurally valid signature with any other return category is
+// not acceptable evidence. Returns null when the encoding is valid ABI-shape
+// evidence, otherwise the reason it is not.
 export function validateSelectorEncoding(
   encoding: string,
   selectorName: string | null,
@@ -474,6 +480,12 @@ export function validateSelectorEncoding(
     return (
       `encoding ${encoding} is not a method signature ` +
       `(expected <return><frame-size> then <type><offset> slots for self and _cmd)`
+    );
+  }
+  if (parsed.returnType !== "v") {
+    return (
+      `encoding ${encoding} return ABI ${parsed.returnType} conflicts with the ` +
+      `typed void predecessor contract (expected return type v)`
     );
   }
   const self = parsed.slots[0];
@@ -605,6 +617,7 @@ export function validateLifecycleEvidenceRecord(
           fail("evidence", `${context} selector ${String(name)} lacks a matching method encoding`);
         } else {
           // ABI-shape evidence: the encoding must be a method signature whose
+          // return ABI is void (the typed void predecessor contract) and whose
           // argument shape/types match the selector the typed evidence record
           // declares (self id @0, _cmd SEL :8, one id argument per colon).
           const problem = validateSelectorEncoding(encoding, isString(name) ? name : null);
