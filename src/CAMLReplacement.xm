@@ -113,7 +113,8 @@ static BOOL SameDescription(__unsafe_unretained id left, __unsafe_unretained id 
 
 // ---- owned/applied recovery state (per consumer) ----
 
-// State mirrors the proven static-glyph model (plampy.glyphOverride): an
+// State mirrors the proven static-glyph ownership model (the glyph-override
+// association removed at M1): an
 // identity key, the recovery original (newest genuine stock description seen),
 // and the owned applied replacement plus the theme it was built for. All
 // references are strong but bounded to the consumer's lifetime: the record is

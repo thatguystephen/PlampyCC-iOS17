@@ -775,18 +775,9 @@ extern "C" __attribute__((noinline, used)) void ObserveFactory(__unsafe_unretain
     RunObserver(true, ObserveFactoryBody, &context);
 }
 
-struct CAMLGlyphContext { __unsafe_unretained id view; const char *outcome; const char *site; };
-static void ObserveGlyphBody(void *rawContext) {
-    CAMLGlyphContext *context = (CAMLGlyphContext *)rawContext;
-    RecordEventBody(context->site, context->view, nil, nil, nil, false, false,
-                    context->outcome);
-}
-extern "C" __attribute__((noinline, used)) void ObserveGlyph(__unsafe_unretained id view,
-                                                             const char *outcome,
-                                                             const char *site) {
-    CAMLGlyphContext context = { view, outcome, site };
-    RunObserver(false, ObserveGlyphBody, &context);
-}
+// M1 (static-substitution subtraction): the static-glyph reconcile trace
+// observer was removed with its substitution-only callers in src/Tweak.xm. No
+// glyph-substitution observer remains.
 
 // Header-glyph observer (docs/FLASHLIGHT-DIAGNOSTIC.md). The two literals are
 // the verified 21D50 Flashlight stock symbols (FlashlightModule strings):

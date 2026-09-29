@@ -3,6 +3,13 @@
 Task: t_99f371b1. Baseline: `d0e77a9b62d0f1388827531420bda762753cdb73`.
 Status: implemented candidate, local contracts verified; NOT device-accepted.
 
+**M1 status (static-substitution subtraction).** The optical policy
+(`src/FlashlightOpticalPolicy.hpp`, `SizedGlyphArt`/`SizedCompactGlyphArt`,
+and `kCompactScale`) was removed with the whole static substitution surface at
+M1; Flashlight glyphs are stock by construction and the measured sizing below
+is a historical measurement record only. See
+`docs/M1-STATIC-SUBTRACTION-CUTOVER.md`.
+
 ## Scope and evidence boundary
 
 Bug-fix route, with optical-policy comparison. Source/test edits and one local

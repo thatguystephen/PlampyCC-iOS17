@@ -45,8 +45,8 @@ def violations(commit: str | None) -> list[str]:
     )
     if not post_strip_re_sign:
         failures.append("post-strip re-sign before packing")
-    if "ReconcileGlyphView" not in source:
-        failures.append("live glyph reconciliation")
+    if "ReconcileGlyphView" in source or "InstallHeaderGlyphHook" in source or "compactSetGlyph" in source:
+        failures.append("static glyph substitution present (M1 must keep it subtracted)")
     if "plampy.originalGlyph" in source:
         failures.append("owned glyph recovery state")
     if "wall.alpha = 0; [background insertSubview:wall" in source:

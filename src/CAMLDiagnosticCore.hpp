@@ -26,30 +26,23 @@ static constexpr const char *kApprovedPackages[] = {
 // precision in CAMLDiagnostic.xm (SerializeEvent). Every approved state token
 // must fit that precision so the documented token is the literal an operator
 // reads in events.jsonl — truncation is never the discriminator. The
-// uniqueness/length enforcement below and tests/glyph-trace-contract.py keep
+// uniqueness/length enforcement below and tests/caml-diagnostic-contract.py keep
 // this constant equal to the serializer's %.12s precision.
 static constexpr size_t kStateWirePrecision = 12;
-// Glyph-trace outcomes (see docs/FLASHLIGHT-DIAGNOSTIC.md): one fixed token per
-// reconciler decision, so a flushed record discriminates the ranked flashlight
-// causes without any free-form text. Each glyph-trace token is at most 12
-// characters and unique as documented.
+// Approved state tokens: the observed button/slider state values plus the
+// header-glyph stock-image comparison verdicts (docs/FLASHLIGHT-DIAGNOSTIC.md).
+// M1 removed the static-glyph substitution trace and its outcome tokens
+// (skip-*, glyph-*, stable-*, and the functional substitution-hook decision
+// tokens) together with their substitution-only callers; no token without a shipping
+// emitter remains here. Allowlist blocks hold string literals only: the
+// contract tests parse every quoted value in them as a token.
 static constexpr const char *kApprovedStates[] = {
     "default", "disabled", "expanded", "highlighted", "collapsed", "off", "on", "selected",
-    "glyph-appl", "glyph-sel-ap", "generic-app",
-    "skip-disable", "skip-no-img", "skip-no-api", "skip-nil", "skip-id-nil", "skip-no-icon",
-    "stable-kept", "stable-repl", "stable-miss", "stable-gone",
     // Header-glyph stock-image comparison (docs/FLASHLIGHT-DIAGNOSTIC.md):
     // one fixed token per comparison verdict, including an explicit
     // cannot-decide verdict so a missing stock match is never over-read as a
-    // negative. Allowlist blocks hold string literals only: the contract
-    // tests parse every quoted value in them as a token.
-    "hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass",
-    // Functional header-hook forwarding decision (docs/FLASHLIGHT-DIAGNOSTIC.md):
-    // one fixed token per forwarded-argument verdict at the substitution hook,
-    // so a flushed record separates a gated bypass, a themed substitution, and
-    // a fail-open forward of the caller's own image — the distinction the
-    // input-side comparison above cannot make.
-    "hdr-bypass", "hdr-subst", "hdr-failop"
+    // negative.
+    "hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass"
 };
 namespace detail {
 inline constexpr size_t TokenLength(const char *token, size_t index = 0) {
@@ -382,7 +375,6 @@ inline const char *ConstructionPathForSite(const char *site) {
     if (strcmp(site, "factory") == 0) return "factory";
     if (strcmp(site, "controller") == 0) return "controller";
     if (strcmp(site, "header-glyph") == 0) return "header";
-    if (strcmp(site, "header-hook") == 0) return "header";
     return "unknown";
 }
 

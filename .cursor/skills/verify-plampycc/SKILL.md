@@ -1,6 +1,6 @@
 ---
 name: verify-plampycc
-description: "Use when verifying a PlampyCC-iOS17 change before handoff or acceptance. PlampyCC is a jailbreak tweak whose user surface is the iOS Control Center module shelf (Flashlight glyphs, animated CAML module packages, a Settings preference pane). Runs the repo-grounded host gates per feature map, verifies the rootless package when packaging is touched, and stops at the device boundary."
+description: "Use when verifying a PlampyCC-iOS17 change before handoff or acceptance. PlampyCC is a jailbreak tweak whose user surface is the iOS Control Center module shelf (animated CAML module packages, wallpaper/blur overlay presentation, a Settings preference pane). Runs the repo-grounded host gates per feature map, verifies the rootless package when packaging is touched, and stops at the device boundary."
 ---
 
 # Verify PlampyCC
@@ -43,11 +43,7 @@ python3 -B tests/manifest-contract.py
 python3 -B tests/signature-contract.py
 python3 -B tests/caml-diagnostic-contract.py
 python3 -B tests/caml-diagnostic-output.py
-python3 -B tests/icon-cache-contract.py
-python3 -B tests/compact-glyph-hook-contract.py
-python3 -B tests/glyph-trace-contract.py
-python3 -B tests/flashlight-optical-contract.py
-python3 -B tests/flashlight-asset-contract.py
+python3 -B tests/m1-static-subtraction-contract.py
 python3 -B tests/prefs-arc-contract.py
 bun install --frozen-lockfile
 ./node_modules/.bin/tsc --noEmit
@@ -59,22 +55,22 @@ bun tools/theme-catalog/generate.ts --check
 bun /home/steph/.hermes/skills/software-development/theos-package-build/scripts/inspect-project.ts . --json
 ```
 
-Healthy when: all nineteen gate commands exit 0 and their PASS lines are captured (`bun install --frozen-lockfile` is a prerequisite, not a gate); `inspect-project.ts` reports no violations beyond the documented baseline below (warnings do not block); `git status --porcelain` shows exactly the intended diff — a working tree that differs from the change under review invalidates the run.
+Healthy when: all fifteen gate commands exit 0 and their PASS lines are captured (`bun install --frozen-lockfile` is a prerequisite, not a gate); `inspect-project.ts` reports no violations beyond the documented baseline below (warnings do not block); `git status --porcelain` shows exactly the intended diff — a working tree that differs from the change under review invalidates the run.
 
 Known inspector baseline (heuristic false positives of `inspect-project.ts`'s rootful-path scan against this repo's pinned contract; any other violation is a real finding):
 
-- `ROOTFUL_PATH` at `tests/static-check.ts:40` — the assertion literal that *enforces* the logical install path.
+- `ROOTFUL_PATH` at `tests/static-check.ts:30` — the assertion literal that *enforces* the logical install path.
 - `ROOTFUL_PATH` at `src/CAMLDiagnostic.xm:262-264` — comments that forbid bare rootful literals.
 - `ROOTFUL_PATH` at `prefs/Makefile:13` (`PlampyCC_INSTALL_PATH = /Library/PreferenceBundles`) — the logical path Theos's rootless scheme rewrites under `/var/jb`; `tests/static-check.ts` requires it verbatim (a second `/var/jb` prefix is the defect), and the verified package proves the rewrite (`./var/jb/Library/PreferenceBundles/...`).
 - `PRIVATE_FRAMEWORK_IMPORT` warnings at `prefs/RootListController.m:2-3` (`Preferences/PSListController.h`, `Preferences/PSSpecifier.h`) — warnings only, non-blocking.
 
-The Python gates compile and run the native C++ policies themselves (`g++`/`c++`): `caml-diagnostic-contract.py` builds `tests/native-caml-diagnostic.cpp`, `caml-diagnostic-output.py` builds `tests/native-caml-directory-walk.cpp`, `flashlight-optical-contract.py` builds `tests/native-flashlight-optical.cpp`. The theme-catalog generation gate follows the same self-compile pattern (`tests/theme-catalog-generation.ts` builds `tests/native-theme-catalog.cpp`). There is no separate native step and no host-side package build — the arm64e ABI requires the pinned macOS CI boundary.
+The Python gates compile and run the native C++ policies themselves (`g++`/`c++`): `caml-diagnostic-contract.py` builds `tests/native-caml-diagnostic.cpp`, `caml-diagnostic-output.py` builds `tests/native-caml-directory-walk.cpp`. The theme-catalog generation gate follows the same self-compile pattern (`tests/theme-catalog-generation.ts` builds `tests/native-theme-catalog.cpp`). There is no separate native step and no host-side package build — the arm64e ABI requires the pinned macOS CI boundary.
 
 ## Drive
 
 Map the change to its feature file(s) in `features/` (index: `features/README.md`):
 
-- Flashlight glyph sizing/state/icons → `features/flashlight-glyphs.md`
+- M1 static-substitution subtraction: Flashlight stock-by-construction, deletion/stock-preservation gates → `features/m1-static-subtraction.md`
 - Animated CAML replacement/reconciliation → `features/caml-replacement-route.md`
 - Diagnostic recorder/admission/output → `features/caml-diagnostic-recorder.md`
 - Packaging, signatures, manifest, staged assets → `features/package-integrity.md`

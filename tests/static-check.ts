@@ -3,22 +3,12 @@ const root = decodeURIComponent(new URL("..", import.meta.url).pathname);
 
 const fail = (message: string): never => { throw new Error(message); };
 const assert = (condition: unknown, message: string) => { if (!condition) fail(message); };
-const read = async (path: string) => Bun.file(`${root}/${path}`).text();
-const exists = async (path: string) => Bun.file(`${root}/${path}`).exists();
+const read = async (path: string): Promise<string> => Bun.file(`${root}/${path}`).text();
+const exists = async (path: string): Promise<boolean> => Bun.file(`${root}/${path}`).exists();
 function reconcileWallpaper(state: any, imageAvailable = true): any {
   if (!state.enabled || !state.wallpaper || !imageAvailable) return { ...state, wallAttached: false, blurAttached: false, alpha: 0 };
   return { ...state, wallAttached: true, blurAttached: state.blur, alpha: state.presented ? 1 : 0 };
 }
-function reconcileGlyph(state: any): any {
-  const canCapture = state.currentImage !== null;
-  if (!state.enabled || !state.mappedIcon || !state.replacementImage || !canCapture) {
-    const restore = state.appliedImage && state.currentImage === state.appliedImage ? state.originalImage : state.currentImage;
-    return { ...state, currentImage: restore, originalImage: null, appliedImage: null };
-  }
-  const original = state.appliedImage && state.currentImage !== state.appliedImage ? state.currentImage : state.originalImage ?? state.currentImage;
-  return { ...state, currentImage: state.replacementImage, originalImage: original, appliedImage: state.replacementImage };
-}
-const disableGlyph = (state: any) => reconcileGlyph({ ...state, enabled: false });
 const source = await read("src/Tweak.xm");
 const makefile = await read("Makefile");
 const prefsMakefile = await read("prefs/Makefile");
@@ -79,44 +69,17 @@ assert(/<key>isController<\/key>\s*<integer>1<\/integer>/.test(entry), "Preferen
 assert(!(await exists("layout/var/jb")), "staged layout still has a rootless prefix directory");
 for (const theme of ["Plampy", "Pulsar"]) assert(await exists(`layout/Library/Application Support/PlampyCC/${theme}/wallpaper.jpeg`), `missing staged ${theme} wallpaper`);
 
-const mapping: Record<string, string> = {
-  "com.apple.camera": "Camera",
-  "com.apple.calculator": "Calculator",
-  "com.apple.BarcodeScanner": "QRCode",
-  "com.apple.VoiceMemos": "VoiceMemos",
-  "com.apple.Magnifier": "Magnifier",
-};
-const mappingEntries = new Map([...source.matchAll(/@"(com\.apple\.[A-Za-z0-9.]+)"\s*:\s*@"([A-Za-z0-9]+)"/g)].map((match) => [match[1], match[2]]));
-assert(mappingEntries.size === Object.keys(mapping).length, "icon mapping has unexpected or missing identifiers");
-for (const [identifier, icon] of Object.entries(mapping)) assert(mappingEntries.get(identifier) === icon, `mapping is not exact: ${identifier} -> ${icon}`);
-
-const expectedOutcomes = {
-  Camera: { Plampy: "theme", Pulsar: "plampy-fallback" },
-  Calculator: { Plampy: "theme", Pulsar: "plampy-fallback" },
-  QRCode: { Plampy: "stock", Pulsar: "stock" },
-  VoiceMemos: { Plampy: "stock", Pulsar: "stock" },
-  Magnifier: { Plampy: "stock", Pulsar: "stock" },
-};
-async function iconOutcome(theme: string, icon: string): Promise<string> {
-  if (await Bun.file(`${root}/layout/Library/Application Support/PlampyCC/${theme}/Icon/${icon}.png`).exists()) return "theme";
-  if (theme === "Pulsar" && await Bun.file(`${root}/layout/Library/Application Support/PlampyCC/Plampy/Icon/${icon}.png`).exists()) return "plampy-fallback";
-  return "stock";
-}
-for (const icon of Object.values(mapping)) for (const theme of ["Plampy", "Pulsar"]) assert(await iconOutcome(theme, icon) === expectedOutcomes[icon][theme], `unexpected ${theme} outcome for ${icon}`);
-
-assert(source.includes("static void ReconcileGlyphView") && source.includes("for (id view in gGlyphViews)"), "live glyph reconciliation is not tracked on preference reload");
-assert(source.includes("plampy.glyphOverride") && source.includes("state[@\"identifier\"]") && source.includes("state[@\"original\"]"), "glyph ownership state is not identity-aware");
-assert(source.includes("CCUIFlashlightModuleViewController") && source.includes("plampy.flashlightGlyphs") && source.includes("FlashlightOff") && source.includes("FlashlightOn"), "Flashlight selected/unselected static glyph ownership is missing");
-assert(source.includes("ReleaseFlashlightGlyphs") && source.includes("@selector(setSelectedGlyphImage:)"), "Flashlight stock glyph restoration seam is missing");
-assert(!source.includes("plampy.originalGlyph") && !source.includes("OBJC_ASSOCIATION_ASSIGN"), "glyph/wallpaper state uses stale non-owned association semantics");
-// The nil-glyph bail releases the owned override. An allowlisted trace token
-// may be recorded first (before the release); the release must still follow in
-// the same block.
-assert(/if \(!current\) \{\n(\s+TraceGlyph\(view, "[a-z-]+"\);\n)?\s+ReleaseGlyphOverride\(view\);/.test(source), "missing replacement does not release an owned glyph safely");
-assert(source.includes("[blur removeFromSuperview]") && source.includes("objc_setAssociatedObject(self, \"plampy.blur\", nil"), "wallpaper teardown does not release blur state");
-assert(source.includes("wall.alpha = [objc_getAssociatedObject(self, \"plampy.presented\") boolValue] ? 1 : 0"), "wallpaper reconciliation does not derive presentation visibility");
-assert(source.includes("objc_setAssociatedObject(self, \"plampy.presented\", @YES") && source.includes("@NO"), "presentation state is not tracked");
-for (const hook of ["Install(button, @selector(layoutSubviews)", "Install(round, @selector(didMoveToWindow)", "Install(overlay, @selector(viewDidLoad)"]) assert(source.includes(hook), `hook coverage missing ${hook}`);
+// M1 (static-substitution subtraction): the static/compact/Flashlight/header
+// glyph substitution surface is gone from src/Tweak.xm. The exact absence and
+// stock-preservation contract lives in tests/m1-static-subtraction-contract.py;
+// this file keeps the retained wallpaper, preference, packaging, and CAML
+// route contracts only.
+assert(!source.includes("ReconcileGlyphView") && !source.includes("HeaderGlyphSubstitute") && !source.includes("InstallHeaderGlyphHook"), "static glyph substitution returned to src/Tweak.xm");
+assert(!source.includes("plampy.originalGlyph") && !source.includes("OBJC_ASSOCIATION_ASSIGN"), "wallpaper state uses stale non-owned association semantics");
+assert(source.includes("[blur removeFromSuperview]") && source.includes('objc_setAssociatedObject(self, "plampy.blur", nil'), "wallpaper teardown does not release blur state");
+assert(source.includes('wall.alpha = [objc_getAssociatedObject(self, "plampy.presented") boolValue] ? 1 : 0'), "wallpaper reconciliation does not derive presentation visibility");
+assert(source.includes('objc_setAssociatedObject(self, "plampy.presented", @YES') && source.includes("@NO"), "presentation state is not tracked");
+for (const hook of ["Install(overlay, @selector(viewDidLoad)", "Install(overlay, @selector(presentAnimated:withCompletionHandler:)", "Install(overlay, @selector(dismissAnimated:withCompletionHandler:)"]) assert(source.includes(hook), `hook coverage missing ${hook}`);
 assert(!source.includes("setGlyphPackageDescription:") && !source.includes("CCUIContinuousSliderView"), "Tweak.xm retains the stale CCUIContinuousSliderView package-setter layer");
 assert(!source.includes("orig_buttonPackage") && !source.includes("orig_roundPackage") && !source.includes("orig_sliderPackage"), "pass-through package hooks remain in Tweak.xm");
 assert(source.includes("bool PlampyCCFunctionalEnabled(void)") && source.includes("int PlampyCCThemeType(void)"), "functional preference state is not exported to the CAML seam");
@@ -210,20 +173,6 @@ assert(wallpaper.wallAttached && wallpaper.alpha === 0, "dismissed overlay shows
 wallpaper = reconcileWallpaper({ ...wallpaper, presented: true });
 assert(wallpaper.alpha === 1, "presentation before wallpaper creation does not become visible");
 
-let glyph = reconcileGlyph({ enabled: true, identifier: "com.apple.camera", mappedIcon: "Camera", replacementImage: "plampy-camera", currentImage: "stock-camera", originalImage: null, appliedImage: null });
-assert(glyph.currentImage === "plampy-camera" && glyph.originalImage === "stock-camera" && glyph.appliedImage === "plampy-camera", "enable does not capture stock ownership before applying a glyph");
-glyph = disableGlyph(glyph);
-assert(glyph.currentImage === "stock-camera" && glyph.originalImage === null && glyph.appliedImage === null, "disable does not restore and release stock ownership");
-glyph = reconcileGlyph({ ...glyph, enabled: true, replacementImage: null });
-assert(glyph.currentImage === "stock-camera" && glyph.appliedImage === null, "missing replacement does not preserve stock");
-glyph = reconcileGlyph({ enabled: true, identifier: "com.apple.camera", mappedIcon: "Camera", replacementImage: "theme-a", currentImage: "stock-a", originalImage: null, appliedImage: null });
-glyph = reconcileGlyph({ ...glyph, replacementImage: "theme-b" });
-glyph = disableGlyph(glyph);
-assert(glyph.currentImage === "stock-a", "theme change does not restore the captured stock image");
-glyph = reconcileGlyph({ enabled: true, identifier: "com.apple.camera", mappedIcon: "Camera", replacementImage: "theme-a", currentImage: "changed-stock", originalImage: "stock-a", appliedImage: "theme-a" });
-glyph = disableGlyph(glyph);
-assert(glyph.currentImage === "changed-stock", "changed stock image was overwritten during restore");
-
 // SP1-R1/SP1-R2: stateful package recovery transitions are exercised against
 // the PRODUCTION transitions (caml_replacement::ClassifyIncoming /
 // PlanConstruction / RecordInstall / ObserveReconcile / PlanReconcileAction in
@@ -256,4 +205,4 @@ assert(nativeTest.includes("weak-lifetime") && nativeTest.includes("not executed
 
 for (const field of ["target_names", "exactly one package is required", "symbols must contain tweak and preferences targets", "unstrippedBinaries", "sha256"]) assert(emitter.includes(field), `manifest producer contract missing ${field}`);
 
-console.log("PASS: exact mapping outcomes, live glyph ownership, wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, production-delegated package recovery transitions (identity/original preservation) exercised natively across all three setter seams with honest weak-lifetime limits, rootless staging/strip contract, post-strip ldid -S re-sign with final-signature and no-mutation assertions, and producer/consumer manifest coverage");
+console.log("PASS: wallpaper/blur transitions, " + camlReferenceCount + " CAML references, verified construct-and-pass CAML route with fail-open fallback and mapping/payload coverage, production-delegated package recovery transitions (identity/original preservation) exercised natively across all three setter seams with honest weak-lifetime limits, rootless staging/strip contract, post-strip ldid -S re-sign with final-signature and no-mutation assertions, and producer/consumer manifest coverage");

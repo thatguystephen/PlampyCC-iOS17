@@ -273,6 +273,27 @@ assert_true("caml_diag::OpenDirectoryUnderTrustedPrefix" in production_walk
 for needle in ("caml_diag::ApprovedValue", "caml_diag::RingPolicy", "caml_diag::DedupPolicy", "caml_diag::CompleteLinePrefix", "caml_diag::AtomicOutputState", "caml_diag::WriteAll"):
     assert_true(needle in SOURCE, f"production does not call shared helper {needle}")
 assert_true("kApprovedPackages" in CORE and "kApprovedStates" in CORE and "kApprovedClasses" in CORE, "approved-value policy is not centralized")
+# Wire-precision contract (carried over from the removed glyph-trace gate): the
+# serialized state field (key "g") is emitted with a bounded %.12s precision,
+# so every approved state token must fit kStateWirePrecision and stay unique —
+# a longer token would reach events.jsonl as a truncation prefix no operator
+# could match. Allowlist length, serializer precision, and the policy constant
+# must agree; tokens serialize exactly as named, never by truncation.
+wire_match = re.search(r'\\"g\\":\\"%\.(\d+)s\\"', SOURCE)
+constant_match = re.search(r"kStateWirePrecision = (\d+)", CORE)
+assert_true(wire_match is not None, "serialized state wire precision is missing from the collector")
+assert_true(constant_match is not None, "kStateWirePrecision is missing from the policy header")
+wire = int(wire_match.group(1))
+assert_true(int(constant_match.group(1)) == wire,
+            "kStateWirePrecision does not match the serializer's state-field precision")
+state_allowlist = re.search(r"kApprovedStates\[\]\s*=\s*\{(.*?)\};", CORE, re.S)
+assert_true(state_allowlist is not None, "approved state allowlist is missing from the policy header")
+state_tokens = re.findall(r'"([a-z-]+)"', state_allowlist.group(1))
+assert_true(bool(state_tokens), "approved state allowlist holds no tokens")
+assert_true(all(len(token) <= wire for token in state_tokens),
+            f"approved state tokens exceed the {wire}-character state wire limit: "
+            f"{sorted(token for token in state_tokens if len(token) > wire)}")
+assert_true(len(set(state_tokens)) == len(state_tokens), "approved state tokens are not unique")
 assert_true("AtomicOperation" in CORE and "AtomicPhase" in CORE, "atomic fault state machine is not centralized")
 assert_true("struct SyscallAdapter" in IO and "AdapterReady" in IO and "EINTR" in SOURCE, "Darwin syscall adapter boundary is missing")
 assert_true("gDarwinSyscalls" in SOURCE and "DarwinOpenAt" in SOURCE and "DarwinRenameAt" in SOURCE, "production adapter is not defined")

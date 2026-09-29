@@ -1,10 +1,22 @@
 # Flashlight compact-glyph diagnostic — iOS 17.2 (21D50)
 
-Task: `t_5c22b84e`. This note records the static conclusion and the bounded
+Task: `t_5c22b84e`. This note recorded the static conclusion and the bounded
 runtime observation added for the remaining Flashlight stock-glyph failure.
 It does not authorize device access, installation, respring, or deployment.
 
-## Static conclusion
+**M1 status (static-substitution subtraction).** The static, compact, and
+header glyph substitution routes — and every substitution-only trace they
+emitted (`glyph-recon`, `glyph-probe`, the `skip-*`/`glyph-*`/`stable-*`
+outcome tokens, and the functional `header-hook` decision tokens
+`hdr-bypass`/`hdr-subst`/`hdr-failop`) — were removed from the shipping dylib
+at M1; see `docs/M1-STATIC-SUBTRACTION-CUTOVER.md`. What remains of this note
+is (a) the proven path-admission contract below, which the collector still
+obeys, and (b) the input-side `header-glyph` runtime observer, which is a
+diagnostic interceptor (not a substitution hook) and stays until the M2
+diagnostic-interceptor removal. The sections describing the substitution
+trace are retained as history only.
+
+## Static conclusion (historical)
 
 `FlashlightModule` has no `glyphPackageDescription:` route. The compact
 controller is `CCUIFlashlightModuleViewController`, a
@@ -15,42 +27,23 @@ controller is `CCUIFlashlightModuleViewController`, a
 slot but not the selected slot. Therefore another CAML/package hook is not a
 supported fix for this failure.
 
-The remaining falsifiable causes are ranked as follows:
-
-1. The hooked view is not the runtime compact host or its
-   `_viewControllerForAncestor` is not the expected Flashlight controller.
-2. The reconcile path is admitted but one required image/API/glyph slot is
-   absent at the first layout pass.
-3. The primary glyph is applied but a later `SBUIFlashlightController` level
-   callback overwrites it.
-4. The master preference or hook initialization prevents admission.
-
-The implementation makes no new hook and does not alter the original
-Flashlight callback. It records only bounded tokens through the existing
-compile-time diagnostic gate and shared ring/allowlist/dedup path.
+The ranked falsifiable causes and the bounded reconciler trace that tested
+them (outcome tokens `skip-*`, `glyph-*`, `stable-*`, site labels
+`glyph-recon`/`glyph-probe`, plus the functional `header-hook` forwarding
+decision) existed only to diagnose that static substitution route and were
+removed with it at M1.
 
 ## Diagnostic fields and interpretation
 
 `events.jsonl` records the existing view tag and approved ancestor class. The
-The serialized `state` field (`g`) uses a `%.12s` wire precision. Every
-approved state token is therefore unique and no longer than 12 characters;
-`CAMLDiagnosticCore.hpp` enforces that contract at compile time. The literal
-values in `events.jsonl` are:
-
-- `skip-disable`, `skip-no-api`, `skip-no-img`, `skip-nil`, `skip-id-nil`,
-  `skip-no-icon`: a ranked admission/bail cause;
-- `glyph-appl`, `glyph-sel-ap`, `generic-app`: an image was written by the
-  corresponding reconcile path;
-- `stable-kept`, `stable-repl`, `stable-miss`, `stable-gone`: a read-only check
-  two seconds after application.
-
-`stable-repl` is the discriminator for a post-reconcile overwrite;
-`skip-*` plus `unknown-class` identifies topology/admission failure. The
-identifier-change nil-glyph bail emits `skip-id-nil` before returning, so a
-stock glyph disappearing during identity recovery remains observable. The
-observer site labels are `glyph-recon` and `glyph-probe`; they are also
-bounded and allowlisted. The probe never invokes a setter, layout invalidation,
-or recursive reconcile, so it cannot recreate the prior watchdog loop.
+serialized `state` field (`g`) uses a `%.12s` wire precision. Every approved
+state token is therefore unique and no longer than 12 characters;
+`CAMLDiagnosticCore.hpp` enforces that contract at compile time, and
+`tests/caml-diagnostic-contract.py` keeps the constant equal to the
+serializer's precision. After M1 the approved state values are the observed
+button/slider states (`default`, `disabled`, `expanded`, `highlighted`,
+`collapsed`, `off`, `on`, `selected`) and the header-glyph stock-image
+comparison tokens (`hdr-stock`, `hdr-other`, `hdr-nil`, `hdr-unclass`).
 
 ## Proven path-admission failure and corrected path contract
 
@@ -82,8 +75,7 @@ The corrected path contract:
   effective (mobile) user; the mobile-owned form may be group-writable
   (observed `mobile:mobile 0755` and `0775` chains) but is never
   world-writable; a root-owned prefix must have no group/world write.
-- Owned suffix: `PlampyCC/CAML-Diagnostic`, walked strictly
-  descriptor-confined: every component opened relative to the held
+- Owned suffix: `PlampyCC/CAML-Diagnostic`, walked [ADDRESS]  descriptor-confined: every component opened relative to the held
   descriptor with `O_NOFOLLOW`, created `0700` when absent, owner must be
   the effective user, intermediates never group/world-writable
   (`(mode & 0022) == 0`), leaf exactly `0700`, event files `0600`.
@@ -96,34 +88,26 @@ The corrected path contract:
 The ownership guarantees are uid-based: same-uid processes (other
 mobile-uid apps) are outside the model.
 
-## Authorized device collection sequence
+## Authorized device collection sequence (historical)
 
-Run only under a separate device-authorized task:
+The glyph-recon collection this sequence was written for diagnosed the
+substitution route removed at M1. The collection hygiene below is retained
+for any future separately device-authorized collector run; the only bounded
+collector output path is
+`/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl`
+(created by `DiagnosticOutputDirectory`):
 
 1. Build the diagnostic variant with `DIAGNOSTIC=1` and enable the existing
-   diagnostic preference. Do not install or respring as part of this task.
-2. Open Control Center once and expand/collapse Flashlight once. Reproduce the
-   stock-glyph observation once, then stop on any crash, watchdog symptom, or
-   unexpected filesystem path.
-3. Collect only the bounded file
-   `/var/jb/var/mobile/Library/Application Support/PlampyCC/CAML-Diagnostic/events.jsonl`
-   (the production path is created by `DiagnosticOutputDirectory`). Do not
-   collect crash logs, paths, identifiers, or unrelated SpringBoard logs in the
-   same artifact.
-4. Group records by `site` and `viewTag`; compare `ancestorClass` and `state`.
-   Expected decisive outcomes:
-   - no `glyph-recon` record: admission/initialization gate;
-   - `skip-no-icon` or `unknown-class`: ownership/topology mismatch;
-   - `glyph-appl` followed by `stable-repl`: later overwrite;
-   - `glyph-appl` plus `stable-kept` but stock display: selected-slot or
-     rendering mismatch, not a missing write.
-5. Flush at the existing dismissal seam, then verify the file contains only
+   diagnostic preference. Do not install or respring as part of any
+   host-only task.
+2. Collect only the bounded `events.jsonl` file above. Do not collect crash
+   logs, paths, identifiers, or unrelated SpringBoard logs in the same
+   artifact.
+3. Flush at the existing dismissal seam, then verify the file contains only
    allowlisted package/state/class values. Delete the diagnostic artifact after
    review according to the operator's device policy.
 
-No result is claimed until a device-authorized collection supplies one of these
-records. The source/test change is therefore instrumentation, not a speculative
-functional hook.
+No result is claimed until a device-authorized collection supplies a record.
 
 ## Header-glyph runtime observer (`header-glyph`)
 
@@ -131,7 +115,10 @@ Task: `t_61ba299e`. This section records the one additional bounded observer
 from the completed seam investigation, and the static evidence it rests on. It
 does not patch visual behavior: the original setter receives the unchanged
 image and point size, no replacement is constructed, and the recorder stays
-compile-time disabled outside collector builds.
+compile-time disabled outside collector builds. (M1 removed the substitution
+hook that used to chain on this seam; the observer itself is a shipping
+diagnostic interceptor and is removed atomically with the other non-setter
+diagnostic interceptors at [ADDRESS], not here.)
 
 Static basis (21D50 inputs, read-only `strings` / `ipsw macho disass`; no
 device):
@@ -145,8 +132,7 @@ device):
   setHeaderGlyphImage:unscaledSymbolPointSize:]`; its prologue keeps the point
   size in `d0` (`fmov d8, d0`), so the compiled ABI shape is the object plus
   64-bit `CGFloat` form `v32@0:8@16d24`. The site installer re-verifies that
-  shape against the runtime encoding (`ABIShapeMatches`) and refuses the hook
-  on any mismatch, recording the refusal like every other site.
+  shape against the runtime encoding (`ABIShapeMatches`) and refuses the [ADDRESS]  on any mismatch, recording the refusal like every other site.
 - `FlashlightModule` ships the two stock level symbols `flashlight.off.fill`
   and `flashlight.on.fill` — the `systemImageNamed:withConfiguration:` inputs
   of `_updateGlyphForFlashlightLevel:`. They are the comparison constants for
@@ -178,75 +164,30 @@ identical to a freshly requested stock reference (`flashlight.off.fill` and
 `flashlight.on.fill`, default or point-size configuration) is `hdr-stock`; a locally extracted symbol
 name equal to a stock symbol is `hdr-stock`, and a different extracted symbol
 name is `hdr-other`; an image that carries no symbol configuration is
-`hdr-other` (the stock level glyphs are always SF Symbol images); anything the
-comparison cannot decide safely is `hdr-unclass`. The symbol name is compared
+`hdr-other` (the stock level glyphs are always SF Symbol images); anything [ADDRESS] cannot decide safely is `hdr-unclass`. The symbol name is compared
 locally and never recorded.
 
 Observation rule: expand the Flashlight module once with a collector build
 installed. A record with `a`=`FlashlightModule` proves expanded Flashlight uses
 the header-glyph seam at all; `g`=`hdr-stock` proves it writes its stock image
-through that seam. Zero `header-glyph` records, or zero records with a
-Flashlight caller, rules the route out and leaves the compact
-`CCUIButtonModuleView` `setGlyphImage:` write as the visible-layer seam. Any
-`hdr-unclass` record keeps the stock-image question open and must be read
-together with `a`, `i`, and `x`.
-
-## Functional header-glyph forwarding decision (`header-hook`)
-
-Task: `t_de25592e`. The input-side `header-glyph` record cannot show what the
-substitution hook in `src/Tweak.xm` forwarded. Two facts pin the record to the
-caller side of the seam: `a`=`FlashlightModule` is the one-frame caller
-identity of the recording hook itself (a functional hook chained above it
-would record `PlampyCC`), and `x`=`w22h40` is the pushed stock image rather
-than a themed decode (the staged `FlashlightOff`/`FlashlightOn` PNGs are
-80 x 144 and decode to `w80h144`). The flushed record is therefore identical
-whether the functional hook chained beneath the observer and substituted, or
-never installed and the stock image was forwarded. That distinction is
-inherently missing from the existing evidence and needs its own bounded token.
-
-The functional hook records exactly one approved decision token per invocation
-through the same admission/dedup/ring/allowlist path, before the original is
-invoked. The site label is `header-hook`; `c`, `a`, and the shared bounded
-fields are unchanged in meaning, and the record adds no path, pointer,
-identifier, image size, or image class beyond them. The decision tokens:
-
-- `hdr-bypass`: the gate was not applicable (tweak disabled, or receiver not
-  exactly `CCUIFlashlightBackgroundViewController`) and the caller's arguments
-  were forwarded unchanged;
-- `hdr-subst`: the cached themed decode was forwarded in place of the pushed
-  image;
-- `hdr-failop`: the gate passed but no faithful substitution existed (a nil
-  push, or a nil/missing/invalid themed decode), so the caller's image was
-  forwarded unchanged.
-
-Interpretation: `hdr-subst` proves the hook ran and forwarded the themed
-decode; `hdr-bypass` or `hdr-failop` proves the caller's stock image was
-forwarded, and which side of the gate produced that verdict. The single
-follow-up device observation is one Flashlight expand with a collector build
-carrying this commit, then the `header-hook` records in `events.jsonl`; no
-further collection closes the substitution-vs-forwarding question.
-
-Install root cause (task `t_724201a5`): the first collector build produced
-zero `header-hook` records beside live `header-glyph` records, which proves
-the substitution hook never executed. The install ran at constructor time
-against `CCUIFlashlightBackgroundViewController`, which is defined in the
-Control Center plugin `FlashlightModule.bundle`; that bundle loads only when
-the module UI is built, so the constructor's `NSClassFromString` returned nil
-and `InstallHeaderGlyphHook` silently skipped — a silent availability-gated
-install, never retried. The install now targets the linked, load-time-
-registered seam owner `CCUICustomContentModuleBackgroundViewController` —
-the same class and `v32@0:8@16d24` method the `header-glyph` site already
-hooks at load — and the exact-receiver-class gate inside the hook keeps
-substitution confined to `CCUIFlashlightBackgroundViewController`; any other
-receiver of the seam records `hdr-bypass` and forwards the caller's arguments
-unchanged. When both hooks chain on the method, the inner one's `a` token is
-`PlampyCC`; the `header-hook` decision token, not `a`, is the forwarding
-evidence.
+through that seam. Any `hdr-unclass` record keeps the stock-image question
+open and must be read together with `a`, `i`, and `x`.
 
 Standing finding (recorded, not changed here): `hdr-unclass` on a caller-side
 stock push shows the input-side stock comparison matched on neither image
 identity against freshly requested stock references nor `_symbolName`, so a
 real push can only reach `hdr-stock` when one of those discriminators happens
-to hit. The functional hook's on-state detection uses the same discriminators,
-and the documented policy above already maps an unclassifiable push to the
-resting off state; changing state detection needs new evidence, not a guess.
+to hit.
+
+## Removed at M1: functional header substitution (`header-hook`)
+
+Task `t_de25592e` added a substitution hook on this seam with one bounded
+decision token per invocation (`hdr-bypass`, `hdr-subst`, `hdr-failop`, site
+label `header-hook`), and task `t_724201a5` fixed its install to target the
+linked seam owner `CCUICustomContentModuleBackgroundViewController` (the
+`CCUIFlashlightBackgroundViewController` plugin class loads too late for a
+constructor-time install). M1 removed that substitution hook, its install
+edge, and its decision tokens together with the whole static substitution
+surface: the header glyph is stock by construction again. The input-side
+`header-glyph` observer above cannot substitute anything and remains until
+the M2 diagnostic-interceptor removal.

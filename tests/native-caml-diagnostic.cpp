@@ -14,8 +14,8 @@ static void TestApprovedValues() {
     assert(strcmp(state, "selected") == 0);
     assert(!CopyApproved(state, sizeof(state), "private", ValueKind::State));
     assert(strcmp(state, "unknown-state") == 0);
-    // Functional header-hook forwarding decisions ride the same gate.
-    for (const char *decision : {"hdr-bypass", "hdr-subst", "hdr-failop"}) {
+    // Header-glyph stock-image comparison verdicts ride the same gate.
+    for (const char *decision : {"hdr-stock", "hdr-other", "hdr-nil", "hdr-unclass"}) {
         assert(CopyApproved(state, sizeof(state), decision, ValueKind::State));
         assert(strcmp(state, decision) == 0);
     }
@@ -122,7 +122,9 @@ static void TestDiagnosticMappingPolicies() {
     assert(strcmp(ConstructionPathForSite("factory"), "factory") == 0);
     assert(strcmp(ConstructionPathForSite("controller"), "controller") == 0);
     assert(strcmp(ConstructionPathForSite("header-glyph"), "header") == 0);
-    assert(strcmp(ConstructionPathForSite("header-hook"), "header") == 0);
+    // M1 removed the header substitution hook site; an unknown/removed site
+    // label must fall through to the "unknown" path rather than a stale map.
+    assert(strcmp(ConstructionPathForSite("header-hook"), "unknown") == 0);
     assert(strcmp(ConstructionPathForSite("other"), "unknown") == 0);
     assert(IsLoadClassificationPath("setter"));
     assert(IsLoadClassificationPath("slider"));
