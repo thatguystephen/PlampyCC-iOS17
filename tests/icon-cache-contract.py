@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Callable, Never
 
+from compact_hook_support import (
+    assert_compact_hook_contract,
+    assert_compact_hook_gate_wiring,
+    function_body,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src/Tweak.xm").read_text()
-WORKFLOW = (ROOT / ".github/workflows/build-rootless.yml").read_text()
 
 
 def fail(message: str) -> Never:
@@ -16,22 +20,6 @@ def fail(message: str) -> Never:
 def assert_true(value: bool, message: str) -> None:
     if not value:
         fail(message)
-
-
-def function_body(text: str, name: str) -> str:
-    match = re.search(rf"\b{re.escape(name)}\s*\(", text)
-    if not match:
-        fail(f"missing function {name}")
-    opening = text.find("{", match.start())
-    depth = 0
-    for index in range(opening, len(text)):
-        if text[index] == "{":
-            depth += 1
-        elif text[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[opening + 1 : index]
-    fail(f"unterminated function {name}")
 
 
 # UIImage uses object identity for this ownership state. A fresh decode on every
@@ -104,11 +92,6 @@ assert_true(
 assert_true(
     reconcile.index("[NSThread isMainThread]") < reconcile.index("ReconcileFlashlightView(view)"),
     "icon cache use is no longer confined behind the main-thread reconciliation hop",
-)
-
-assert_true(
-    "python3 -B tests/icon-cache-contract.py" in WORKFLOW,
-    "icon identity regression is not wired into the build gate",
 )
 
 # Header-glyph substitution contract (src/Tweak.xm): the Flashlight header
@@ -316,11 +299,13 @@ assert_true('ObserveGlyph(self, decision, "header-hook");' in header_hook,
 # content: a content-only PNG shrink (56x80 -> 44x62 in the same 80x144
 # canvas) left device rendering unchanged while the delivered package
 # provably carried the new bytes. Every case that cannot be substituted
-# faithfully fails open to the caller's image.
-def compact_argument(*, enabled: bool, module_view: bool, push: object,
+# faithfully fails open to the caller's image. Ownership is not discovered on
+# this hot path: ReconcileGlyphView classifies once, caches the verdict in the
+# kFlashlightOwnedView marker, and the setters read only that marker.
+def compact_argument(*, enabled: bool, flashlight_owned: bool, push: object,
                      selected_slot: bool, cache: dict[str, object]) -> object:
-    """Decision model of CompactSubstitutedArgument/CompactGlyphSubstitute."""
-    if not enabled or not module_view or push is None:
+    """Decision model of the cached-marker gate and CompactGlyphSubstitute."""
+    if not enabled or not flashlight_owned or push is None:
         return push
     name = "FlashlightOn" if selected_slot else "FlashlightOff"
     if not isinstance(cache.get(name), Themed):
@@ -328,22 +313,22 @@ def compact_argument(*, enabled: bool, module_view: bool, push: object,
     return f"sized:{name}"
 
 assert_true(
-    compact_argument(enabled=True, module_view=True, push=INCOMING,
+    compact_argument(enabled=True, flashlight_owned=True, push=INCOMING,
                      selected_slot=False, cache=decoded) == "sized:FlashlightOff",
     "setGlyphImage: does not render the FlashlightOff art for the resting slot",
 )
 assert_true(
-    compact_argument(enabled=True, module_view=True, push=INCOMING,
+    compact_argument(enabled=True, flashlight_owned=True, push=INCOMING,
                      selected_slot=True, cache=decoded) == "sized:FlashlightOn",
     "setSelectedGlyphImage: does not render the FlashlightOn art for the active slot",
 )
 for label, case in {
-    "disabled": dict(enabled=False, module_view=True, push=INCOMING, selected_slot=False, cache=decoded),
-    "other-module": dict(enabled=True, module_view=False, push=INCOMING, selected_slot=False, cache=decoded),
-    "nil-push": dict(enabled=True, module_view=True, push=None, selected_slot=False, cache=decoded),
-    "missing-themed": dict(enabled=True, module_view=True, push=INCOMING, selected_slot=False,
+    "disabled": dict(enabled=False, flashlight_owned=True, push=INCOMING, selected_slot=False, cache=decoded),
+    "not-owned": dict(enabled=True, flashlight_owned=False, push=INCOMING, selected_slot=False, cache=decoded),
+    "nil-push": dict(enabled=True, flashlight_owned=True, push=None, selected_slot=False, cache=decoded),
+    "missing-themed": dict(enabled=True, flashlight_owned=True, push=INCOMING, selected_slot=False,
                            cache={"FlashlightOn": Themed("FlashlightOn")}),
-    "invalid-themed": dict(enabled=True, module_view=True, push=INCOMING, selected_slot=False,
+    "invalid-themed": dict(enabled=True, flashlight_owned=True, push=INCOMING, selected_slot=False,
                            cache={"FlashlightOff": object(), "FlashlightOn": Themed("FlashlightOn")}),
 }.items():
     assert_true(
@@ -411,11 +396,13 @@ assert_true(
     and "SizedGlyphArt(name, image.size)" in header_sub,
     "the header does not pin the positive off identity and render at the pushed canvas",
 )
-assert_true(
-    'NSClassFromString(@"CCUIFlashlightModuleViewController")' in compact_gate
-    and "[AncestorController(self) isKindOfClass:flashlightClass]" in compact_gate,
-    "compact substitution is not confined to the Flashlight module button",
-)
+# Source-shape contract: classification is cold (ReconcileGlyphView caches the
+# kFlashlightOwnedView verdict) and the hot setters read only that marker, with
+# no ancestry traversal or runtime class discovery. Shared with
+# tests/compact-glyph-hook-contract.py via tests/compact_hook_support.py so the
+# safe cached-marker shape and the old synchronous-ancestry shape cannot drift.
+assert_compact_hook_contract(SOURCE)
+assert_compact_hook_gate_wiring()
 assert_true(
     compact_gate.index("gEnabled") < compact_gate.index("CompactGlyphSubstitute("),
     "compact substitution does not consult the existing functional state first",
@@ -466,5 +453,8 @@ print(
     "converges on pass two, caches misses before filesystem access, and invalidates on reload; "
     "header-glyph substitution stays class/state-bounded, reuses the cached themed decodes, "
     "and fails open on disabled state, other classes, and nil/missing/invalid themed images; "
-    "the recorded forwarding decision matches the bypass/substitute/fail-open model"
+    "the recorded forwarding decision matches the bypass/substitute/fail-open model; "
+    "compact substitution reads only the cached kFlashlightOwnedView marker with no ancestry "
+    "traversal or runtime class discovery, classified cold in ReconcileGlyphView, and the "
+    "icon/compact glyph contracts are wired into both the build gate and Doctor surface"
 )
